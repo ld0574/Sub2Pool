@@ -10,7 +10,7 @@ import { useDateTime } from "@/composables/useDateTime";
 const formatDateTime = useDateTime();
 const formatNumber = (value: number) => value.toLocaleString();
 
-const props = defineProps<{ data: CPAPoolSummary }>();
+const props = defineProps<{ data: CPAPoolSummary; loading?: boolean }>();
 const emit = defineEmits<{ refresh: [] }>();
 const auth = useAuthStore();
 const members = computed(() =>
@@ -57,6 +57,21 @@ const members = computed(() =>
           成员额度 · {{ data.members.length }} 人
         </h3>
         <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="btn btn-sm"
+            :disabled="loading"
+            :aria-busy="loading"
+            @click="emit('refresh')"
+          >
+            <span
+              v-if="loading"
+              class="loading loading-xs loading-spinner"
+              aria-hidden="true"
+            ></span>
+            <AppIcon v-else name="arrow-path" class="size-4" />
+            {{ loading ? "刷新中…" : "刷新" }}
+          </button>
           <RouterLink
             v-if="auth.canAccess('statistics')"
             :to="{

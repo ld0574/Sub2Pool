@@ -30,10 +30,13 @@ const provider = ref<"sub2api" | "cpa">(
 const cpaAccounts = ref<MonitoredAccount[]>([]);
 const cpaAccountId = ref<number | null>(null);
 const cpaSummary = ref<CPAPoolSummary | null>(null);
+const cpaLoading = ref(false);
 let cpaGeneration = 0;
 async function loadCPA() {
   const current = ++cpaGeneration;
-  cpaSummary.value = null;
+  if (cpaSummary.value?.selected_account_id !== cpaAccountId.value)
+    cpaSummary.value = null;
+  cpaLoading.value = cpaAccountId.value != null;
   if (cpaAccountId.value == null) return;
   try {
     const result = await api<CPAPoolSummary>(
@@ -44,6 +47,8 @@ async function loadCPA() {
     if (current === cpaGeneration)
       message.value =
         error instanceof ApiError ? error.message : "加载 CPA 额度失败";
+  } finally {
+    if (current === cpaGeneration) cpaLoading.value = false;
   }
 }
 watch(cpaAccountId, loadCPA);
@@ -333,9 +338,16 @@ onMounted(() => {
           {{ account.name }}
         </option>
       </select>
-      <button class="btn" @click="loadCPA">刷新 CPA 额度</button>
+      <button class="btn" :disabled="cpaLoading" @click="loadCPA">
+        刷新 CPA 额度
+      </button>
     </div>
-    <CPAPoolCard v-if="cpaSummary" :data="cpaSummary" @refresh="loadCPA" />
+    <CPAPoolCard
+      v-if="cpaSummary"
+      :data="cpaSummary"
+      :loading="cpaLoading"
+      @refresh="loadCPA"
+    />
     <p v-else class="col-span-12">
       {{
         cpaAccounts.length

@@ -199,6 +199,7 @@ onMounted(initialize);
   <CPAPoolCard
     v-if="data?.cpa_summary"
     :data="data.cpa_summary"
+    :loading="loading"
     @refresh="load"
   />
   <ParticipantUsageCard

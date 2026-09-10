@@ -222,6 +222,7 @@ onMounted(load);
   <CPAPoolCard
     v-if="data?.cpa_summary"
     :data="data.cpa_summary"
+    :loading="loading"
     @refresh="load"
   />
   <CollectionStatusCard v-if="data" :data="data" />
