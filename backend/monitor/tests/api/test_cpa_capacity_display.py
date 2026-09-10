@@ -220,7 +220,8 @@ def test_v9_upgrade_replays_reconnects_and_preserves_source_facts(setup):
         obs.save(update_fields=["raw_window"])
     call_command("replayobservations", stdout=StringIO())
     latest.refresh_from_db()
-    assert latest.raw_window["rate_method"] == "particle_filter_v10"
+    from monitor.accounting.contracts import ALGORITHM_VERSION
+    assert latest.raw_window["rate_method"] == ALGORITHM_VERSION
     assert latest.effective_usd_per_percent == expected
     assert list(Observation.objects.values(*source_fields)) == facts
     assert list(CPAUsageEvent.objects.values()) == events

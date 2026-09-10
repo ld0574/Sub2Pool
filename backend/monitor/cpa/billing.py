@@ -108,6 +108,7 @@ def cycle_rows(account, config, now):
                         "manual_override",
                         "official_zero_observation",
                         "provider_collection_baseline",
+                        "provider_quota_adjustment",
                     }
                     or obs.interval_used_percent != obs.upstream_used_percent
                 )

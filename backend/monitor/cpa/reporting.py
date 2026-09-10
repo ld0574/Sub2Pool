@@ -33,12 +33,16 @@ def _totals():
 
 
 def account_summary(account, config, now, bindings):
+    # Raw official window facts remain usable even if their percentage cannot
+    # participate in the model. Never fall back to an older week on exclusion.
     observation = (
         Observation.objects.filter(
             account_id=account.fact_key,
-            excluded_at__isnull=True,
-            attribution_started_at__isnull=False,
+            observed_at__lte=now,
+            window_seconds__gt=0,
+            upstream_resets_at__isnull=False,
         )
+        .exclude(exclusion_source="manual")
         .prefetch_related("participant_snapshots")
         .order_by("-observed_at", "-id")
         .first()
@@ -127,6 +131,8 @@ def pool_summary(user, account, config=None):
         if not observation:
             unavailable_reasons.append("尚无额度观测")
         else:
+            if observation.excluded_at is not None:
+                unavailable_reasons.append("上游额度观测异常，暂不参与权益结算")
             if not observation.valid_sample:
                 unavailable_reasons.append("额度观测尚不足以估算")
             if observation.upstream_resets_at <= now:

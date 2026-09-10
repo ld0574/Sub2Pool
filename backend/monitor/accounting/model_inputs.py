@@ -107,6 +107,7 @@ def build_dynamic_replay_input(
             "manual_override",
             "official_zero_observation",
             "provider_collection_baseline",
+            "provider_quota_adjustment",
         }
     )
     if first_is_observed_baseline:

@@ -300,6 +300,20 @@ def infer_segments(
                 continue
             covered_observations.append(observation)
 
+    def confirmed_adjustment_run(rows):
+        return (
+            collection_intervals is not None
+            and len({row.observed_at for row in rows}) >= 3
+            and rows[-1].observed_at - rows[0].observed_at
+            >= timedelta(minutes=20)
+            and all(row.id not in collection_baseline_ids for row in rows)
+            and all(
+                later.upstream_used_percent + RESET_ROLLBACK_TOLERANCE
+                >= earlier.upstream_used_percent
+                for earlier, later in zip(rows, rows[1:])
+            )
+        )
+
     observations = covered_observations
     segments: list[ReplaySegment] = []
     current: ReplaySegment | None = None
@@ -431,13 +445,17 @@ def infer_segments(
             continue
 
         low_run = [observation]
+        stable_run = [observation]
         scan = index + 1
         recovered = False
         while scan < len(observations):
             candidate = observations[scan]
-            if candidate.is_manual_start or not same_official_reset(
-                candidate.upstream_resets_at,
-                current.resets_at,
+            if (
+                candidate.is_manual_start
+                or candidate.id in collection_baseline_ids
+                or not same_official_reset(
+                    candidate.upstream_resets_at, current.resets_at
+                )
             ):
                 break
             if candidate.upstream_used_percent + RESET_ROLLBACK_TOLERANCE >= (
@@ -446,7 +464,40 @@ def infer_segments(
                 recovered = True
                 break
             low_run.append(candidate)
+            if (
+                candidate.upstream_used_percent + RESET_ROLLBACK_TOLERANCE
+                < stable_run[-1].upstream_used_percent
+            ):
+                stable_run = [candidate]
+            else:
+                stable_run.append(candidate)
             scan += 1
+            # Once confirmed, later natural usage reaching the old percentage
+            # must not retroactively erase this correction baseline.
+            if confirmed_adjustment_run(stable_run):
+                break
+
+        # A lasting CPA quota credit is a new measurement baseline, not a
+        # new official week. Require independent, covered samples over time;
+        # transient drops and Sub2API retain the existing exclusion behavior.
+        confirmed_adjustment = not recovered and confirmed_adjustment_run(stable_run)
+        if confirmed_adjustment:
+            unsettled = low_run[: len(low_run) - len(stable_run)]
+            mark_automatic_exclusion(
+                unsettled, "上游额度校正尚未稳定，采用后续稳定观测起点"
+            )
+            automatic.extend(unsettled)
+            baseline = stable_run[0]
+            segments.append(current)
+            current = observed_baseline_segment(
+                baseline,
+                reason="provider_quota_adjustment",
+                percent_baseline=baseline.upstream_used_percent,
+                cost_basis=cost_basis,
+            )
+            current.observations.append(baseline)
+            index += len(unsettled) + 1
+            continue
 
         reason = (
             "后续快照恢复到回退前进度，判定为瞬时异常"

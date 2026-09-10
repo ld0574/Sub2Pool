@@ -114,6 +114,7 @@ def _replay_usage_samples(
             "manual_override",
             "official_zero_observation",
             "provider_collection_baseline",
+            "provider_quota_adjustment",
         }:
             baseline = normalized_by_key.get(
                 (
@@ -266,6 +267,18 @@ def _replay_anchor(
     merge_previous: bool = False,
 ) -> datetime:
     """返回能覆盖本次变化、但不会多算更早稳定区间的最早时间。"""
+
+    if observation.account_id < 0:
+        # CPA corrections depend on pre-drop evidence and confirmation samples.
+        # Replaying only the corrected tail would reinterpret it as a fresh
+        # official window and lose its observed percentage/cost baseline.
+        return (
+            Observation.objects.filter(account_id=observation.account_id)
+            .order_by("observed_at", "id")
+            .values_list("observed_at", flat=True)
+            .first()
+            or observation.observed_at
+        )
 
     previous = _previous_included(observation)
     if merge_previous:

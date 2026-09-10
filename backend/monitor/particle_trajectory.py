@@ -23,11 +23,13 @@ OBSERVED_BASELINE_REASONS = {
     "manual_override",
     "official_zero_observation",
     "provider_collection_baseline",
+    "provider_quota_adjustment",
 }
 REASON_LABELS = {
     "official_window": "官方周期",
     "official_zero_observation": "官方 0% 起点",
     "provider_collection_baseline": "CPA 采集区间起点",
+    "provider_quota_adjustment": "CPA 上游额度校正起点",
     "manual_override": "管理员起点",
 }
 
@@ -156,7 +158,7 @@ def _segment_for_period(
         ),
         percent_baseline=(
             first.upstream_used_percent
-            if reason in {"manual_override", "provider_collection_baseline"}
+            if reason in {"manual_override", "provider_collection_baseline", "provider_quota_adjustment"}
             else ZERO
         ),
     )
