@@ -163,6 +163,7 @@ def _prepare_usage_event(
         cached_input_tokens=cached_tokens,
         output_tokens=_nonnegative_int(tokens.get("output_tokens")),
         reasoning_tokens=_nonnegative_int(tokens.get("reasoning_tokens")),
+        reasoning_effort=str(payload.get("reasoning_effort") or "").strip()[:32],
         total_tokens=_nonnegative_int(tokens.get("total_tokens")),
         failed=bool(payload.get("failed")),
         latency_ms=_nonnegative_int(payload.get("latency_ms")),

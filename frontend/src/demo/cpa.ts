@@ -97,6 +97,7 @@ export function initializeCPADemo(state: DemoState) {
       cached_input_tokens: 3000,
       output_tokens: 1100 + i * 13,
       reasoning_tokens: 350,
+      reasoning_effort: i % 3 === 0 ? "" : i % 2 === 0 ? "high" : "xhigh",
       total_tokens: 10100 + i * 83,
       failed: i % 17 === 0,
       latency_ms: 1800 + i * 15,
@@ -664,9 +665,7 @@ export function handleCPA({
       items: events.slice((page - 1) * size, page * size).map((event) => ({
         ...event,
         api_key_alias:
-          event.api_key_alias ||
-          cpa.keys.keys.find((key) => key.id === event.key_id)?.name ||
-          "",
+          cpa.keys.keys.find((key) => key.id === event.key_id)?.name || "",
       })),
       total: events.length,
       summary,

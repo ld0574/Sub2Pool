@@ -681,13 +681,14 @@ def test_no_observation_explains_unknown_without_hiding_collected_usage(setup):
 
 
 @pytest.mark.parametrize("readonly", [False, True])
-def test_request_key_alias_and_local_note_fallback_are_scoped(setup, readonly):
+def test_request_key_label_uses_local_note_not_model_alias_and_is_scoped(setup, readonly):
     config, admin, account, alice, bob, keys, start = setup
     first = event(account, keys[0], start + timedelta(minutes=1))
-    first.alias = 'Le'
-    first.save(update_fields=['alias'])
+    first.alias = 'gpt-5.6-luna'
+    first.reasoning_effort = 'xhigh'
+    first.save(update_fields=['alias', 'reasoning_effort'])
     second = event(account, keys[0], start + timedelta(minutes=2))
-    keys[0].name = 'Laptop'
+    keys[0].name = ' Le '
     keys[0].save(update_fields=['name'])
     private = event(account, keys[1], start + timedelta(minutes=3))
     private.alias = 'Other private alias'
@@ -702,7 +703,16 @@ def test_request_key_alias_and_local_note_fallback_are_scoped(setup, readonly):
     assert response.status_code == 200
     rows = {row['id']: row for row in response.json()['data']['items']}
     assert rows[first.id]['api_key_alias'] == 'Le'
-    assert rows[second.id]['api_key_alias'] == 'Laptop'
+    assert rows[second.id]['api_key_alias'] == 'Le'
+    assert rows[first.id]['reasoning_effort'] == 'xhigh'
+    assert rows[second.id]['reasoning_effort'] == ''
     assert private.id not in rows
     assert 'Other private alias' not in response.content.decode()
     assert keys[0].key_hash not in response.content.decode()
+    keys[0].name = ''
+    keys[0].save(update_fields=['name'])
+    response = client.get(f'/api/{path}?account_id={account.id}', **headers)
+    assert response.status_code == 200
+    rows = {row['id']: row for row in response.json()['data']['items']}
+    assert rows[first.id]['api_key_alias'] == ''
+    assert rows[first.id]['api_key_hint'] == keys[0].hint

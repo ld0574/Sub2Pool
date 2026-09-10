@@ -24,7 +24,7 @@ const defaults = () => ({
   key: "",
   model: "",
   status: "",
-  range: "7",
+  range: "today",
   start: "",
   end: "",
 });
@@ -58,6 +58,10 @@ const keyLabel = (item: CPARequest) => {
   if (!hint || (alias.endsWith(hint) && /(?:\.\.\.|…|····)/.test(alias)))
     return alias.replace(/(?:…|····)/g, "...");
   return `${alias}...${hint}`;
+};
+const requestLabel = (item: CPARequest) => {
+  const effort = item.reasoning_effort?.trim();
+  return effort ? `${keyLabel(item)} · 思考 ${effort}` : keyLabel(item);
 };
 const speed = (item: CPARequest) =>
   item.latency_ms > item.ttft_ms && item.ttft_ms > 0 && item.output_tokens > 0
@@ -158,6 +162,23 @@ async function load() {
         throw new Error("时间范围须大于零且不超过 90 天");
       query.set("started_at", start);
       query.set("ended_at", end);
+    } else if (f.range === "today") {
+      const now = new Date();
+      const parts = Object.fromEntries(
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: auth.timezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+          .formatToParts(now)
+          .map((part) => [part.type, part.value]),
+      );
+      query.set(
+        "started_at",
+        toIso(`${parts.year}-${parts.month}-${parts.day}T00:00`),
+      );
+      query.set("ended_at", now.toISOString());
     } else query.set("days", f.range);
     const result = await api<CPARequests>(`cpa/requests?${query}`);
     if (current === generation) data.value = result;
@@ -321,7 +342,7 @@ onMounted(async () => {
         <div class="grid grid-cols-2 gap-3 xl:grid-cols-5">
           <label class="grid gap-2 text-xs text-base-content/70"
             >时间范围<select v-model="filters.range" class="select w-full">
-              <option value="1">最近 24 小时</option>
+              <option value="today">今天</option>
               <option value="7">最近 7 天</option>
               <option value="30">最近 30 天</option>
               <option value="custom">自定义时间</option>
@@ -502,7 +523,7 @@ onMounted(async () => {
                     {{ item.model }}
                   </div>
                   <div class="mt-1 text-xs text-base-content/60">
-                    {{ keyLabel(item) }}
+                    {{ requestLabel(item) }}
                   </div>
                 </td>
                 <td>
@@ -584,7 +605,7 @@ onMounted(async () => {
                 <div class="min-w-0">
                   <h3 class="truncate font-medium">{{ item.model }}</h3>
                   <p class="mt-1 text-xs text-base-content/60">
-                    {{ keyLabel(item) }}
+                    {{ requestLabel(item) }}
                   </p>
                 </div>
                 <span
@@ -719,7 +740,8 @@ onMounted(async () => {
           >
         </div>
         <p class="mt-2 text-sm text-base-content/60">
-          {{ formatTime(selection.occurred_at) }} · {{ keyLabel(selection) }}
+          {{ formatTime(selection.occurred_at) }} ·
+          {{ requestLabel(selection) }}
         </p>
         <dl class="mt-6 grid grid-cols-2 gap-5 text-sm">
           <div

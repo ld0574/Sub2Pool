@@ -184,6 +184,7 @@ export interface CPARequest {
   request_id: string;
   api_key_hint: string;
   api_key_alias?: string;
+  reasoning_effort?: string;
   model: string;
   endpoint: string;
   input_tokens: number;

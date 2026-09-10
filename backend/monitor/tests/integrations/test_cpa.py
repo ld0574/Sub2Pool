@@ -2086,3 +2086,30 @@ def test_cpa_management_client_lists_codex_accounts_and_reads_weekly_window():
         "/v0/management/auth-files",
         "/v0/management/api-call",
     ]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("spooled", [False, True])
+@pytest.mark.parametrize("effort", [None, "", "high", "xhigh"])
+def test_usage_reasoning_effort_survives_ingestion_without_inference(spooled, effort):
+    from monitor.cpa.usage import prepare_usage_payload_for_spool
+
+    account = create_cpa_account()
+    payload = {
+        "auth_index": account.cpa_auth_index,
+        "request_id": "effort-test",
+        "timestamp": (timezone.now() + timedelta(seconds=1)).isoformat(),
+        "model": "gpt-5.6-luna",
+        "alias": "gpt-5.6-luna",
+        "api_key": "example-key",
+        "tokens": {"reasoning_tokens": 500},
+    }
+    if effort is not None:
+        payload["reasoning_effort"] = effort
+    if spooled:
+        payload = prepare_usage_payload_for_spool(payload)
+    assert persist_usage_event(payload) == "created"
+    assert persist_usage_event(payload) == "duplicate"
+    saved = CPAUsageEvent.objects.get()
+    assert saved.reasoning_effort == (effort or "")
+    assert saved.reasoning_tokens == 500

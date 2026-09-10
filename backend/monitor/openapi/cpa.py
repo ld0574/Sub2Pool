@@ -240,9 +240,13 @@ def cpa_schemas():
                 "occurred_at": time,
                 "request_id": text,
                 "api_key_hint": text,
+                "reasoning_effort": {
+                    "type": "string",
+                    "description": "CPA 返回的请求思考强度，如 high、xhigh；未提供或旧请求未采集时为空。",
+                },
                 "api_key_alias": {
                     "type": "string",
-                    "description": "请求携带的 CPA Key alias；缺失时使用已绑定 Key 的本地备注，无别名则为空。仅随授权请求返回。",
+                    "description": "CPA Key 的本地备注；无备注则为空，不使用请求的模型路由 alias。仅随授权请求返回。",
                 },
                 "model": text,
                 "endpoint": text,

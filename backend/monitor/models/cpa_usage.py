@@ -22,6 +22,7 @@ class CPAUsageEvent(models.Model):
     cached_input_tokens = models.PositiveBigIntegerField(default=0)
     output_tokens = models.PositiveBigIntegerField(default=0)
     reasoning_tokens = models.PositiveBigIntegerField(default=0)
+    reasoning_effort = models.CharField(max_length=32, blank=True)
     total_tokens = models.PositiveBigIntegerField(default=0)
     failed = models.BooleanField(default=False)
     latency_ms = models.PositiveBigIntegerField(default=0)
