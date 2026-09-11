@@ -118,6 +118,16 @@ docker compose logs --tail=100 app
 
 已有源码部署：在原部署目录中更新到本仓库的 `cpa` 分支，再执行 `docker compose up -d --build`。保留原 `.env`、Compose 项目名和数据卷挂载；不要重新生成已有实例的 `DJANGO_SECRET_KEY`，加密配置和 CPA Key 摘要依赖它。
 
+Debian 发版可直接运行（首次获取脚本先执行一次 `git pull --ff-only`）：
+
+```bash
+bash scripts/deploy-cpa.sh
+# 使用原有覆盖文件或环境文件时，将相同参数传入：
+bash scripts/deploy-cpa.sh -f compose.yaml -f compose.cpa.yaml --env-file .env
+```
+
+脚本自动进入仓库根目录，依次执行 `git pull --ff-only`、`docker compose down`、`docker build -t sub2pool-cpa:local .`、`docker compose up -d`，最后显示容器状态。运行用户须能操作 Git 和 Docker。停机前会检查 Compose 配置是否使用此本地镜像；任一步失败即停止，构建期间服务暂停。不删除数据卷，不修改 `.env`，不会自动合并有分叉的 Git 历史。`up -d` 返回表示容器已启动，迁移和历史重放完成情况请继续查看日志。
+
 已有 GHCR 部署：先在另一个目录构建本地镜像，然后在原部署目录增加覆盖文件，以沿用原实例的数据卷和环境变量：
 
 ```bash

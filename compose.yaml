@@ -1,5 +1,6 @@
 services:
   app:
+    image: sub2pool-cpa:local
     build:
       context: .
       dockerfile: Dockerfile
