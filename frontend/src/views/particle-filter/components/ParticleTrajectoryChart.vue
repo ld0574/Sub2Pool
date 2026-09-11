@@ -187,6 +187,16 @@ const activeCoordinate = computed(() =>
     ? coordinate(activeFrame.value.timeMs, activePoint.value.capacity_usd)
     : { x: 0, y: 0 },
 );
+// Keep the complete amount on the inward side of the active point, including
+// the final sample at the right edge and the transposed mobile layout.
+const activeLabel = computed(() => {
+  const placeLeft = activeCoordinate.value.x > width.value / 2;
+  return {
+    x: activeCoordinate.value.x + (placeLeft ? -14 : 14),
+    y: clamp(activeCoordinate.value.y - 18, 16, height.value - 12),
+    anchor: placeLeft ? "end" : "start",
+  };
+});
 const activeParticles = computed(() => {
   const frame = activeFrame.value;
   if (!frame) return [];
@@ -422,9 +432,9 @@ onBeforeUnmount(() => {
     />
     <text
       v-if="activePoint"
-      :x="activeCoordinate.x + (mobile ? 0 : 14)"
-      :y="activeCoordinate.y + (mobile ? -18 : -12)"
-      :text-anchor="mobile ? 'middle' : 'start'"
+      :x="activeLabel.x"
+      :y="activeLabel.y"
+      :text-anchor="activeLabel.anchor"
       class="fill-current text-xs font-semibold"
     >
       {{ formatCurrency(activePoint.capacity_usd) }}
