@@ -13,3 +13,7 @@ backend/staticfiles/*
 reference/
 billing-review-output/
 /research-review-output/
+
+# Server-local recovery overrides must survive git pull and stay private.
+/compose.recover*.yaml
+/compose.recover*.yaml.bak-*

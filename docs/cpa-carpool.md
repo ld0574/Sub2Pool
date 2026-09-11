@@ -116,17 +116,47 @@ docker compose up -d --build
 docker compose logs --tail=100 app
 ```
 
-已有源码部署：在原部署目录中更新到本仓库的 `cpa` 分支，再执行 `docker compose up -d --build`。保留原 `.env`、Compose 项目名和数据卷挂载；不要重新生成已有实例的 `DJANGO_SECRET_KEY`，加密配置和 CPA Key 摘要依赖它。
+已有源码部署：使用下面的升级脚本，保留原 `.env`、Compose 项目名、数据卷和网络。不要重新生成已有实例的 `DJANGO_SECRET_KEY`，加密配置和 CPA Key 摘要依赖它。
 
-Debian 发版可直接运行（首次获取脚本先执行一次 `git pull --ff-only`）：
+Debian 升级脚本需要 Python 3.9+（Debian 11 及更新版本默认满足）、Git 和支持 `--wait` / `--wait-timeout` 的 Docker Compose。缺少 Python 时先安装 `apt-get install python3`。首次获取修复后的脚本先执行 `git pull --ff-only`；这一步只更新代码，不重建容器。
 
 ```bash
-bash scripts/deploy-cpa.sh
-# 使用原有覆盖文件或环境文件时，将相同参数传入：
-bash scripts/deploy-cpa.sh -f compose.yaml -f compose.cpa.yaml --env-file .env
+git pull --ff-only
+./scripts/deploy-cpa.sh --check  # 先核对，不停止或替换容器
+./scripts/deploy-cpa.sh          # 确需发版时再执行
 ```
 
-脚本自动进入仓库根目录，依次执行 `git pull --ff-only`、`docker compose down`、`docker build -t sub2pool-cpa:local .`、`docker compose up -d`，最后显示容器状态。运行用户须能操作 Git 和 Docker。停机前会检查 Compose 配置是否使用此本地镜像；任一步失败即停止，构建期间服务暂停。不删除数据卷，不修改 `.env`，不会自动合并有分叉的 Git 历史。`up -d` 返回表示容器已启动，迁移和历史重放完成情况请继续查看日志。
+脚本仅升级现有运行中的实例，不用于首次安装。不带参数时，根据当前仓库对应的现有 `app` 容器标签沿用原 Compose 文件、项目名和标签中记录的环境文件。找不到唯一容器或原配置文件时直接停止，不猜测部署配置。原来使用自定义环境文件但旧 Compose 没有记录该文件时，需要显式传入原 `--env-file` 参数。
+
+`--check` 仅验证当前部署配置，不拉取代码、构建镜像、备份或停止容器；通过后会显示实际数据挂载和网络，密钥不会输出。
+
+本次恢复后的服务器应保留 `compose.recover-data.yaml`，其中同时声明原数据卷 `sub2pool_sub2pool-data` 和外部网络 `cpa_cpa`。可明确指定配置运行：
+
+```bash
+./scripts/deploy-cpa.sh -p sub2pool \
+  -f compose.yaml -f compose.recover-data.yaml
+```
+
+其他实例使用自己的原配置，不要照搬上述卷名或网络名。恢复文件及其 `.bak-*` 备份已加入 Git 忽略规则；它们属于服务器本地配置，不要删除。
+
+脚本依次执行：
+
+1. 核对现有容器与目标配置的项目名、所有数据挂载、网络、`DJANGO_SECRET_KEY`、数据目录及健康检查。`app.image` 必须为 `sub2pool-cpa:local`。手动加入的网络必须先写入 Compose；不一致时在拉取代码和停服前中止。如果其他运行中的容器也使用同一数据源，会拒绝发版，以免停写不完整导致备份不一致。
+2. `git pull --ff-only`，重新核对配置，保留旧镜像标签，再构建新镜像。此时旧容器继续服务。
+3. 构建成功后再次核对配置和容器未被其他操作更改，然后停止原容器写入，复制整个 `/app/data`（包括 SQLite、WAL 和 CPA spool），检查备份数据库完整性。
+4. 仅替换 `app`，执行 `up -d --no-deps --no-build --pull never --wait --wait-timeout 300 app`；健康检查通过后再次核对实际挂载和网络，才报告成功。
+
+备份保存在仓库同级的 `<仓库目录名>-backups/`，例如 `/data/sub2pool-backups/`。每次备份包括 `data/`、原容器信息、解析后的 Compose 配置和旧镜像标签；只有 `BACKUP_COMPLETE` 存在时才表示备份完成。备份目录权限为 `0700`，配置文件为 `0600`；其中含有密钥，不要公开。脚本不会删除备份、旧镜像或数据卷，也不会修改 `.env`、生成密钥或运行 `down`。
+
+拉取或构建失败不会停止旧容器；停止之后、启动新版本之前若备份失败，会尝试重新启动原容器。新版本开始启动后可能已经迁移数据库，启动失败或健康检查超时不会自动回滚数据库或重新启动旧镜像。应先检查原 Compose 配置下的 `ps` 和 `logs --tail=100 app`，确认情况后结合完整备份恢复。
+
+同一仓库的并发发版会被拒绝。停止写入、备份、迁移及重放期间仍有停机时间；这是单实例升级，不是多副本滚动升级。完整目录备份所需时间随数据量增长。
+
+### 数据卷和 CPA 网络恢复说明
+
+源码 `compose.yaml` 默认使用 `pinche-data`，而 GHCR 示例使用 `sub2pool-data`，两者会生成不同的 Docker 卷。旧版本脚本切换 Compose 文件时未校验挂载，可能启动空库。出现这种情况应保留所有卷，检查旧数据库，停止写入并备份后再显式挂回原卷；不要初始化新账号、清理卷或重新生成密钥。
+
+如果 CPA 地址为 `http://cpa:8317`，两个容器必须共享能够解析 `cpa` 的 Docker 网络。手动 `docker network connect` 只修复当前容器，还必须把外部网络写入 Compose，以便重建后继续连接。不能只靠绑定到宿主机 `127.0.0.1` 的 CPA 端口供其他容器访问。
 
 已有 GHCR 部署：先在另一个目录构建本地镜像，然后在原部署目录增加覆盖文件，以沿用原实例的数据卷和环境变量：
 
@@ -151,7 +181,7 @@ docker compose -f compose.yaml -f compose.cpa.yaml up -d --no-build
 docker compose -f compose.yaml -f compose.cpa.yaml logs --tail=100 app
 ```
 
-源码升级也应在重建前使用上述停止与备份命令。若原部署使用额外的 `-p`、`--env-file` 或其他 Compose 文件，升级命令继续使用相同参数。后续使用本地镜像部署时，继续带上 `-f compose.cpa.yaml`。
+上面的 GHCR 手动升级流程同样需要沿用所有原部署参数。若原部署使用额外的 `-p`、`--env-file` 或其他 Compose 文件，升级命令继续使用相同参数。后续使用本地镜像部署时，继续带上 `-f compose.cpa.yaml`。
 
 容器启动脚本会自动执行 `migrate`（包括 `0052`、`0053`、`0054`、`0055`）、历史重放及管理员初始化，无需手工进入容器迁移。首次升级的历史重放可能延长启动时间，可通过日志确认完成，再访问 `http://服务器IP:8088`（或原访问地址）。升级后按本文配置流程设置 CPA 成员、Key、份额和系统用户授权。
 
