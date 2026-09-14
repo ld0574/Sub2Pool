@@ -86,6 +86,9 @@ export function initializeCPADemo(state: DemoState) {
     return {
       id: i + 1,
       source: "cpa",
+      usage_state: "",
+      cost_state: "",
+      pricing_completeness: "",
       account_id: 3,
       participant_id: state.participants[owner]?.id ?? null,
       key_id: owner + 1,

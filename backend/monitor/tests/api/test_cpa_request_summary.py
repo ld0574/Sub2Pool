@@ -103,12 +103,14 @@ def test_request_summary_splits_unpriced_events_by_source(setup):
         model="missing-gpt-load-price",
     )
     gpt_load_event.source = "gpt_load"
+    gpt_load_event.usage_state = "complete"
     gpt_load_event.cost_state = "unpriced"
     gpt_load_event.pricing_completeness = "missing"
     gpt_load_event.source_cost_nano_usd = 0
     gpt_load_event.save(
         update_fields=[
             "source",
+            "usage_state",
             "cost_state",
             "pricing_completeness",
             "source_cost_nano_usd",
@@ -124,3 +126,41 @@ def test_request_summary_splits_unpriced_events_by_source(setup):
     assert summary["unpriced_request_count"] == 2
     assert summary["cpa_unpriced_request_count"] == 1
     assert summary["gpt_load_unpriced_request_count"] == 1
+
+
+def test_missing_gpt_load_usage_is_visible_but_not_counted_as_unpriced(setup):
+    _config, _admin, account, alice, _bob, keys, start = setup
+    missing = event(
+        account,
+        keys[0],
+        start,
+        tokens=0,
+        model="gpt-6-astra",
+    )
+    missing.source = "gpt_load"
+    missing.usage_state = "missing"
+    missing.cost_state = "unpriced"
+    missing.pricing_completeness = "unavailable"
+    missing.source_cost_nano_usd = 0
+    missing.save(
+        update_fields=[
+            "source",
+            "usage_state",
+            "cost_state",
+            "pricing_completeness",
+            "source_cost_nano_usd",
+        ]
+    )
+
+    _user, client, headers = member_client(account, alice)
+    data = client.get(
+        f"/api/cpa/requests?account_id={account.id}&include_summary=true",
+        **headers,
+    ).json()["data"]
+
+    assert data["summary"]["request_count"] == 1
+    assert data["summary"]["usage_usd"] == 0
+    assert data["summary"]["unpriced_request_count"] == 0
+    assert data["summary"]["gpt_load_unpriced_request_count"] == 0
+    assert data["items"][0]["usage_state"] == "missing"
+    assert data["items"][0]["unpriced"] is False

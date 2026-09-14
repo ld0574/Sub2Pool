@@ -181,6 +181,9 @@ export interface CPAClaim {
 export interface CPARequest {
   id: number;
   source: "cpa" | "gpt_load";
+  usage_state: string;
+  cost_state: string;
+  pricing_completeness: string;
   occurred_at: string;
   request_id: string;
   api_key_hint: string;

@@ -237,6 +237,10 @@ def cpa_schemas():
         "CPARequest": _object(
             {
                 "id": integer,
+                "source": {"type": "string", "enum": ["cpa", "gpt_load"]},
+                "usage_state": text,
+                "cost_state": text,
+                "pricing_completeness": text,
                 "occurred_at": time,
                 "request_id": text,
                 "api_key_hint": text,

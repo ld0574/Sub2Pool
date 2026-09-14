@@ -284,9 +284,15 @@ def cpa_event_cost(
     event: CPAUsageEvent,
     config: AppSettings,
 ) -> tuple[Decimal, bool]:
-    """Return current estimated cost and whether the model price is unknown."""
+    """Return current cost and whether observed usage remains unpriced."""
 
     if event.source == "gpt_load":
+        # GPT-Load explicitly distinguishes a request whose response exposed no
+        # usage from one whose observed usage could not be priced. There are no
+        # tokens to apply a model price to in the former case, so keep the
+        # request for diagnostics but do not report it as a missing price.
+        if event.usage_state == "missing":
+            return ZERO, False
         cost = Decimal(event.source_cost_nano_usd or 0) / Decimal("1000000000")
         incomplete = event.cost_state == "unpriced" or (
             event.cost_state == "priced"

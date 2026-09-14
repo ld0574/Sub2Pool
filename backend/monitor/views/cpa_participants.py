@@ -331,6 +331,9 @@ class CPARequestsView(CPAReadView):
                 {
                     "id": event.id,
                     "source": event.source,
+                    "usage_state": event.usage_state,
+                    "cost_state": event.cost_state,
+                    "pricing_completeness": event.pricing_completeness,
                     "occurred_at": event.occurred_at.isoformat(),
                     "request_id": event.request_id,
                     "api_key_hint": event.api_key_hint,

@@ -77,6 +77,14 @@ const requestLabel = (item: CPARequest) => {
 };
 const requestSourceLabel = (item: CPARequest) =>
   item.source === "gpt_load" ? "GPT-Load" : "CPA";
+const missingUsage = (item: CPARequest) =>
+  item.source === "gpt_load" && item.usage_state === "missing";
+const requestCost = (item: CPARequest) =>
+  missingUsage(item)
+    ? "无用量"
+    : item.unpriced
+      ? "未计价"
+      : money(item.usage_usd);
 const speed = (item: CPARequest) =>
   item.latency_ms > item.ttft_ms && item.ttft_ms > 0 && item.output_tokens > 0
     ? (item.output_tokens / ((item.latency_ms - item.ttft_ms) / 1000)).toFixed(
@@ -605,7 +613,12 @@ onMounted(async () => {
                 </td>
                 <td class="font-medium tabular-nums">
                   <span
-                    v-if="item.unpriced"
+                    v-if="missingUsage(item)"
+                    class="badge badge-soft badge-sm"
+                    >无用量</span
+                  >
+                  <span
+                    v-else-if="item.unpriced"
                     class="badge badge-soft badge-sm badge-warning"
                     >未计价</span
                   ><template v-else>{{ money(item.usage_usd) }}</template>
@@ -656,7 +669,7 @@ onMounted(async () => {
                   <p class="text-xs text-base-content/60">Token / 估算费用</p>
                   <p class="mt-1 tabular-nums">
                     {{ compact(item.total_tokens) }} ·
-                    {{ item.unpriced ? "未计价" : money(item.usage_usd) }}
+                    {{ requestCost(item) }}
                   </p>
                 </div>
                 <div>
@@ -793,10 +806,9 @@ onMounted(async () => {
               ['总耗时', duration(selection.latency_ms)],
               ['首 Token 延迟', duration(selection.ttft_ms)],
               ['估算输出速度', `${speed(selection)} Token/s`],
-              [
-                '估算费用',
-                selection.unpriced ? '未计价' : money(selection.usage_usd),
-              ],
+              ['估算费用', requestCost(selection)],
+              ['用量状态', selection.usage_state || '未提供'],
+              ['计价状态', selection.cost_state || '未提供'],
               ['请求服务等级', selection.requested_service_tier || '未提供'],
               ['响应服务等级', selection.response_service_tier || '未提供'],
             ]"
