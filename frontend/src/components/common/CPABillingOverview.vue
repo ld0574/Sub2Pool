@@ -32,11 +32,18 @@ const error = ref("");
 const saving = ref(false);
 const money = (n: number | null | undefined) =>
   n == null ? "未知" : formatCurrency(n);
-const weeklyRemaining = (week: CPAWeeklyDistribution) =>
-  week.remaining_usd ??
-  (week.capacity_usd == null
-    ? null
-    : Math.max(0, week.capacity_usd - week.usage_usd));
+const weeklyCapacityConflict = (week: CPAWeeklyDistribution) =>
+  week.capacity_usd != null &&
+  week.usage_usd > week.capacity_usd &&
+  week.upstream_remaining_percent != null &&
+  week.upstream_remaining_percent > 0;
+const comparableWeeklyCapacity = (week: CPAWeeklyDistribution) =>
+  weeklyCapacityConflict(week) ? null : week.capacity_usd;
+const weeklyRemaining = (week: CPAWeeklyDistribution) => {
+  if (week.remaining_usd != null) return week.remaining_usd;
+  const capacity = comparableWeeklyCapacity(week);
+  return capacity == null ? null : Math.max(0, capacity - week.usage_usd);
+};
 const memberName = (id: number) =>
   props.data.members.find((m) => m.participant_id === id)?.participant_name ??
   "其他历史成员";
@@ -134,8 +141,18 @@ const monthlySegments = computed(() => [
           >
           · {{ dateTime(week.capacity_estimate.as_of) }}
         </p>
+        <p v-if="weeklyCapacityConflict(week)" class="text-sm text-warning">
+          当前美元容量估计低于已计价请求，但上游仍明确剩余
+          {{
+            week.upstream_remaining_percent?.toFixed(1)
+          }}%。暂不判定超额，以上游周限为准；待缺价请求补齐或后续有效观测后重新校准。
+        </p>
         <p
-          v-if="week.capacity_usd != null && week.coverage_complete === false"
+          v-if="
+            week.capacity_usd != null &&
+            week.coverage_complete === false &&
+            !weeklyCapacityConflict(week)
+          "
           class="text-xs text-base-content/60"
         >
           估算剩余＝整车估算容量－已采集费用。漏采或未定价请求尚未扣除，实际上游剩余比例见下方。
@@ -143,7 +160,7 @@ const monthlySegments = computed(() => [
         <CPADistributionBar
           label="成员已采集消耗 / 估算剩余"
           percent-basis="本周额度"
-          :capacity="week.capacity_usd"
+          :capacity="comparableWeeklyCapacity(week)"
           :segments="[
             ...week.members.map((m) => ({
               label: memberName(m.participant_id),
