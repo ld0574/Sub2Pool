@@ -23,7 +23,9 @@ function observationsData(context: DemoRequestContext): ObservationListData {
     legacy_fast_only: item.legacy_fast_only ?? item.fast_correction_calculated,
     account_id: account?.external_account_id ?? item.account_id,
   }));
-  if (account?.provider === "cpa") items = [];
+  if (account?.provider === "cpa" || account?.provider === "gpt_load") {
+    items = [];
+  }
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const source = url.searchParams.get("source");

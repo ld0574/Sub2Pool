@@ -46,6 +46,8 @@ function statusLabel(account: AccountStatusAccount): string {
   }
   const labels: Record<string, string> = {
     active: "正常",
+    available: "正常",
+    cooldown: "冷却中",
     disabled: "已禁用",
     error: "异常",
     rate_limited: "受限",
@@ -130,7 +132,7 @@ onMounted(load);
         </ul>
       </div>
       <p class="mt-1 max-w-3xl text-sm opacity-60">
-        读取 Sub2API 或 CPA
+        读取 Sub2API、CPA 或 GPT-Load
         保存的账号状态、额度窗口与本地请求统计；上游未提供的字段不会显示。
       </p>
     </div>
@@ -150,8 +152,8 @@ onMounted(load);
     <AppIcon name="information-circle" class="size-5" />
     <span>
       Sub2API 账号读取被动额度快照和本地请求日志；CPA
-      账号直接读取周限，并使用本地持续采集的 usage
-      队列估算成本。刷新本页不会补造连接监控前的历史数据。
+      账号直接读取周限，并使用本地持续采集的 usage 队列估算成本；GPT-Load
+      账号同步请求日志中的冻结计价，并读取官方订阅额度。刷新本页不会补造连接监控前的历史数据。
     </span>
   </div>
 
@@ -226,7 +228,11 @@ onMounted(load);
               </span>
             </div>
             <p class="mt-1 text-xs opacity-50">
-              {{ `Sub2API #${account.external_account_id}` }}
+              {{
+                account.provider === "gpt_load"
+                  ? `GPT-Load ${account.source_account_id}`
+                  : `Sub2API #${account.external_account_id}`
+              }}
               <template v-if="account.runtime?.account_type">
                 · {{ account.runtime.account_type }}
               </template>

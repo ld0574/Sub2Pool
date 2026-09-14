@@ -87,7 +87,8 @@ def visible_accounts_for(user, queryset: QuerySet | None = None) -> QuerySet:
     if user.is_staff:
         return accounts
     return accounts.filter(authorized_users=user).filter(
-        Q(provider="sub2api") | Q(pool__allocations__participant__authorized_users=user)
+        Q(provider="sub2api")
+        | Q(pool__allocations__participant__authorized_users=user)
     ).distinct()
 
 

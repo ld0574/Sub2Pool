@@ -201,7 +201,7 @@ def billing_summary(user, account, config, now, bindings, members):
         return result
     accounts = (
         visible_accounts_for(user)
-        .filter(provider="cpa")
+        .filter(provider=account.provider)
         .filter(Q(pool=pool) | Q(cpa_contracts__pool_id_at_capture=pool.id))
         .distinct()
     )

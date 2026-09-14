@@ -2,7 +2,7 @@ import type { CPACapacityEstimate } from "./cpa";
 import type { CorrectionBreakdown } from "./common";
 export type QuotaProfile = "auto" | "plus" | "pro_5x" | "pro_20x";
 export type EffectiveQuotaProfile = Exclude<QuotaProfile, "auto">;
-export type AccountProvider = "sub2api" | "cpa";
+export type AccountProvider = "sub2api" | "cpa" | "gpt_load";
 
 export interface MonitoredAccount {
   id: number;
@@ -11,6 +11,10 @@ export interface MonitoredAccount {
   pool_id: number;
   external_account_id: number | null;
   cpa_auth_index: string | null;
+  gpt_load_group_id?: number | null;
+  gpt_load_credential_id?: number | null;
+  gpt_load_cutover_at?: string | null;
+  gpt_load_logs_synced_through?: string | null;
   name: string;
   enabled: boolean;
   quota_query_mode: "passive" | "direct";
@@ -39,6 +43,17 @@ export interface CPAAccountOption {
   unavailable: boolean;
   success: number;
   failed: number;
+}
+export interface GPTLoadAccountOption {
+  group_id: number;
+  group_name: string;
+  channel_id: string;
+  credential_id: number;
+  email: string;
+  mask: string;
+  plan_type: string;
+  configured_status: string;
+  effective_status: string;
 }
 export interface AccountRuntimeStatus {
   name: string | null;

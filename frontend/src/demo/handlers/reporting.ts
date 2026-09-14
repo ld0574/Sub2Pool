@@ -88,7 +88,7 @@ function statisticsData(state: DemoState, url: URL): StatisticsData {
     state.monitoredAccounts.find((item) => item.id === accountId) ??
     state.monitoredAccounts.find((item) => item.enabled) ??
     state.monitoredAccounts[0]!;
-  if (account.provider === "cpa") {
+  if (account.provider === "cpa" || account.provider === "gpt_load") {
     const summary = demoCPASummary(state, account.id);
     const cycle = summary?.accounts[0];
     return {
@@ -393,12 +393,14 @@ function accountStatusData(state: DemoState): AccountStatusData {
     accounts: state.monitoredAccounts.map((account, index) => {
       const fixture = fixtures[index % fixtures.length]!;
       const isCPA = account.provider === "cpa";
+      const isGPTLoad = account.provider === "gpt_load";
+      const isSubscription = isCPA || isGPTLoad;
       const resetAt = new Date(
         sampledAt + (index === 0 ? 52 : 91) * 3_600_000,
       ).toISOString();
       const cycleCapacity =
         (account.capacity_min_usd + account.capacity_max_usd) / 2;
-      const cycles = isCPA
+      const cycles = isSubscription
         ? []
         : Array.from({ length: 12 }, (_, cycleIndex) => {
             const endedAt =
@@ -437,12 +439,12 @@ function accountStatusData(state: DemoState): AccountStatusData {
         cpa_quota: isCPA ? demoCPAStatus(state, account.id) : undefined,
         runtime: {
           name: account.name,
-          account_type: isCPA ? "pro" : "oauth",
+          account_type: isSubscription ? "pro" : "oauth",
           status: "active",
           schedulable: true,
-          current_concurrency: isCPA ? null : fixture.concurrency,
-          concurrency_limit: isCPA ? null : 10,
-          last_used_at: isCPA
+          current_concurrency: isSubscription ? null : fixture.concurrency,
+          concurrency_limit: isSubscription ? null : 10,
+          last_used_at: isSubscription
             ? null
             : new Date(sampledAt - (index + 1) * 85_000).toISOString(),
           rate_limited_at: null,
@@ -453,9 +455,9 @@ function accountStatusData(state: DemoState): AccountStatusData {
           error_message: null,
         },
         usage: {
-          source: isCPA ? "cpa_direct" : "passive",
+          source: isCPA ? "cpa_direct" : isGPTLoad ? "gpt_load" : "passive",
           updated_at: new Date(sampledAt - 95_000).toISOString(),
-          five_hour: isCPA
+          five_hour: isSubscription
             ? null
             : {
                 used_percent: index === 0 ? 18.2 : 6.75,
@@ -476,16 +478,16 @@ function accountStatusData(state: DemoState): AccountStatusData {
             request_count: isCPA ? 0 : fixture.requests,
             token_count: isCPA ? 0 : fixture.tokens,
             account_cost_usd: isCPA ? 0 : fixture.accountCost,
-            standard_cost_usd: isCPA
+            standard_cost_usd: isSubscription
               ? null
               : Number((fixture.accountCost / 1.12).toFixed(2)),
-            user_cost_usd: isCPA
+            user_cost_usd: isSubscription
               ? null
               : Number((fixture.accountCost * 1.08).toFixed(2)),
           },
-          needs_verify: isCPA ? null : false,
-          is_banned: isCPA ? null : false,
-          needs_reauth: isCPA ? null : false,
+          needs_verify: isSubscription ? null : false,
+          is_banned: isSubscription ? null : false,
+          needs_reauth: isSubscription ? null : false,
           error_code: null,
           error: null,
         },
@@ -493,22 +495,22 @@ function accountStatusData(state: DemoState): AccountStatusData {
           days: 30,
           actual_days_used: isCPA ? 0 : 26,
           account_cost_usd: isCPA ? 0 : statsAccountCost,
-          fast_correction_usd: isCPA ? null : fixture.fastCorrection,
-          correction_total_usd: isCPA ? null : fixture.fastCorrection,
-          long_context_correction_usd: isCPA ? null : 0,
-          model_correction_usd: isCPA ? null : 0,
+          fast_correction_usd: isSubscription ? null : fixture.fastCorrection,
+          correction_total_usd: isSubscription ? null : fixture.fastCorrection,
+          long_context_correction_usd: isSubscription ? null : 0,
+          model_correction_usd: isSubscription ? null : 0,
           correction_facts_complete: false,
-          legacy_fast_only: !isCPA,
-          account_cost_with_correction_usd: isCPA
+          legacy_fast_only: !isSubscription,
+          account_cost_with_correction_usd: isSubscription
             ? null
             : Number((statsAccountCost + fixture.fastCorrection).toFixed(2)),
-          account_cost_with_fast_correction_usd: isCPA
+          account_cost_with_fast_correction_usd: isSubscription
             ? null
             : Number((statsAccountCost + fixture.fastCorrection).toFixed(2)),
-          standard_cost_usd: isCPA
+          standard_cost_usd: isSubscription
             ? null
             : Number((fixture.accountCost * 3.2).toFixed(2)),
-          user_cost_usd: isCPA
+          user_cost_usd: isSubscription
             ? null
             : Number((fixture.accountCost * 3.9).toFixed(2)),
           request_count: isCPA ? 0 : fixture.requests * 4,
@@ -528,7 +530,7 @@ function accountStatusData(state: DemoState): AccountStatusData {
             account_cost_usd: isCPA
               ? 0
               : Number((fixture.accountCost * 0.12).toFixed(2)),
-            user_cost_usd: isCPA
+            user_cost_usd: isSubscription
               ? null
               : Number((fixture.accountCost * 0.13).toFixed(2)),
             request_count: isCPA ? 0 : Math.round(fixture.requests * 0.14),

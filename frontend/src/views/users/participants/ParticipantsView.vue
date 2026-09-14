@@ -24,10 +24,21 @@ import type {
 } from "./types";
 
 const auth = useAuthStore();
-const provider = ref<"sub2api" | "cpa">(
-  useRoute().query.provider === "cpa" ? "cpa" : "sub2api",
+const requestedProvider = useRoute().query.provider;
+const provider = ref<"sub2api" | "cpa" | "gpt_load">(
+  requestedProvider === "cpa" || requestedProvider === "gpt_load"
+    ? requestedProvider
+    : "sub2api",
 );
-const cpaAccounts = ref<MonitoredAccount[]>([]);
+const subscriptionAccounts = ref<MonitoredAccount[]>([]);
+const cpaAccounts = computed(() =>
+  subscriptionAccounts.value.filter(
+    (account) => account.provider === provider.value && account.enabled,
+  ),
+);
+const providerLabel = computed(() =>
+  provider.value === "gpt_load" ? "GPT-Load" : "CPA",
+);
 const cpaAccountId = ref<number | null>(null);
 const cpaSummary = ref<CPAPoolSummary | null>(null);
 const cpaLoading = ref(false);
@@ -46,12 +57,22 @@ async function loadCPA() {
   } catch (error) {
     if (current === cpaGeneration)
       message.value =
-        error instanceof ApiError ? error.message : "加载 CPA 额度失败";
+        error instanceof ApiError
+          ? error.message
+          : `加载 ${providerLabel.value} 额度失败`;
   } finally {
     if (current === cpaGeneration) cpaLoading.value = false;
   }
 }
 watch(cpaAccountId, loadCPA);
+watch(provider, () => {
+  if (provider.value === "sub2api") return;
+  if (!cpaAccounts.value.some((account) => account.id === cpaAccountId.value)) {
+    cpaAccountId.value = cpaAccounts.value[0]?.id ?? null;
+  } else {
+    void loadCPA();
+  }
+});
 
 const participants = ref<Participant[]>([]);
 const sub2apiUsers = ref<Sub2APIUserOption[]>([]);
@@ -86,16 +107,27 @@ async function load() {
   loading.value = true;
   try {
     participants.value = await api<Participant[]>("participants");
-    cpaAccounts.value = (
+    subscriptionAccounts.value = (
       await api<MonitoredAccount[]>("settings/monitored-accounts")
-    ).filter((a) => a.provider === "cpa" && a.enabled);
-    if (cpaAccountId.value == null)
+    ).filter(
+      (account) =>
+        (account.provider === "cpa" || account.provider === "gpt_load") &&
+        account.enabled,
+    );
+    if (
+      cpaAccountId.value == null ||
+      !cpaAccounts.value.some((account) => account.id === cpaAccountId.value)
+    ) {
       cpaAccountId.value = cpaAccounts.value[0]?.id ?? null;
+    }
     if (
       !participants.value.some((p) => p.sub2api_user_id != null) &&
-      cpaAccounts.value.length
-    )
-      provider.value = "cpa";
+      subscriptionAccounts.value.length
+    ) {
+      const first = subscriptionAccounts.value[0];
+      provider.value = first.provider as "cpa" | "gpt_load";
+      cpaAccountId.value = first.id;
+    }
   } catch (error) {
     message.value =
       error instanceof ApiError ? error.message : "加载参与者失败";
@@ -165,7 +197,7 @@ async function save(form: ParticipantFormData, participantId: number | null) {
     );
     editor.value?.close();
     await load();
-    if (provider.value === "cpa") await loadCPA();
+    if (provider.value !== "sub2api") await loadCPA();
   } catch (error) {
     message.value = error instanceof ApiError ? error.message : "保存失败";
   } finally {
@@ -188,7 +220,7 @@ async function remove(participant: Participant) {
     await api(`participants/${participant.id}`, { method: "DELETE" });
     editor.value?.close();
     await load();
-    if (provider.value === "cpa") await loadCPA();
+    if (provider.value !== "sub2api") await loadCPA();
   } catch (error) {
     message.value = error instanceof ApiError ? error.message : "删除失败";
   }
@@ -215,6 +247,7 @@ onMounted(() => {
     >
       <option value="sub2api">Sub2API</option>
       <option value="cpa">CPA</option>
+      <option value="gpt_load">GPT-Load</option>
     </select>
     <div class="grow">
       <div class="breadcrumbs text-sm">
@@ -321,14 +354,19 @@ onMounted(() => {
     </div>
   </section>
 
-  <template v-if="provider === 'cpa'">
-    <CPAKeyManager v-if="auth.isStaff" :participants="participants" />
+  <template v-if="provider !== 'sub2api'">
+    <CPAKeyManager
+      v-if="auth.isStaff"
+      :key="provider"
+      :participants="participants"
+      :provider="provider"
+    />
     <div class="col-span-12 flex flex-wrap gap-2">
       <select
         v-if="cpaAccounts.length"
         v-model="cpaAccountId"
         class="select"
-        aria-label="选择 CPA 账号"
+        :aria-label="`选择 ${providerLabel} 账号`"
       >
         <option
           v-for="account in cpaAccounts"
@@ -339,20 +377,21 @@ onMounted(() => {
         </option>
       </select>
       <button class="btn" :disabled="cpaLoading" @click="loadCPA">
-        刷新 CPA 额度
+        刷新 {{ providerLabel }} 额度
       </button>
     </div>
     <CPAPoolCard
       v-if="cpaSummary"
       :data="cpaSummary"
+      :provider="provider === 'gpt_load' ? 'gpt_load' : 'cpa'"
       :loading="cpaLoading"
       @refresh="loadCPA"
     />
     <p v-else class="col-span-12">
       {{
         cpaAccounts.length
-          ? "等待 CPA 额度数据"
-          : "尚无可查看的 CPA 账号，请配置账号、额度池和成员授权。"
+          ? `等待 ${providerLabel} 额度数据`
+          : `尚无可查看的 ${providerLabel} 账号，请配置账号、额度池和成员授权。`
       }}
     </p>
     <section
@@ -362,7 +401,7 @@ onMounted(() => {
       <div class="card-body">
         <h2 class="card-title">参与者身份与状态</h2>
         <p class="text-sm opacity-60">
-          在系统用户页面为登录账号授权参与者及 CPA 账号。
+          在系统用户页面为登录账号授权参与者及 {{ providerLabel }} 账号。
         </p>
         <div class="overflow-x-auto">
           <table class="table">
@@ -380,7 +419,7 @@ onMounted(() => {
                 <td>
                   {{
                     participant.sub2api_user_id == null
-                      ? "可绑定 CPA Key"
+                      ? `可绑定 ${providerLabel} Key`
                       : `同时绑定 Sub2API 用户 ${participant.sub2api_user_id}`
                   }}
                 </td>

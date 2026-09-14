@@ -22,6 +22,9 @@ const usagePrecision = defineModel<"raw" | "hour" | "day">("precision", {
 });
 
 const chartMode = ref<"bar" | "heatmap">("bar");
+const subscriptionLabel = computed(() =>
+  props.data?.account.provider === "gpt_load" ? "GPT-Load" : "CPA",
+);
 
 function usageDeltas(points: UsagePoint[]) {
   return points.slice(1).flatMap((point, index) => {
@@ -71,15 +74,15 @@ const usageIntervalLabel = computed(
         <div>
           <h2 class="card-title">
             <AppIcon name="chart-bar" class="size-5" />{{
-              data?.account.provider === "cpa"
-                ? "CPA API 密钥用量"
+              data?.account.provider !== "sub2api"
+                ? `${subscriptionLabel} API 密钥用量`
                 : "参与者账号用量"
             }}
             <span
               class="responsive-help-tooltip tooltip tooltip-bottom"
               :data-tip="
-                data?.account.provider === 'cpa'
-                  ? '按 CPA usage 队列事件携带的 API Key 本地哈希分组。柱状图和热力图展示所选时间粒度内的请求成本，不保存原始 API Key。'
+                data?.account.provider !== 'sub2api'
+                  ? `按 ${subscriptionLabel} 请求事件携带的 API Key 稳定标识分组。柱状图和热力图展示所选时间粒度内的请求成本，不保存原始 API Key。`
                   : `柱状图和热力图都使用相邻累计值相减，展示所选时间粒度内的新增用量；首个数据点没有前序基线，累计值回落的跨周期区间也不会绘制。热力图按当前范围内的最大增量动态划分主题色深浅。后台当前每 ${data?.sample_interval_minutes ?? '—'} 分钟探测一次。`
               "
             >
@@ -210,7 +213,9 @@ const usageIntervalLabel = computed(
         </article>
       </div>
       <div
-        v-else-if="data?.account.provider === 'cpa' && cpaApiKeyCharts.length"
+        v-else-if="
+          data?.account.provider !== 'sub2api' && cpaApiKeyCharts.length
+        "
         class="grid grid-cols-1 gap-4 xl:grid-cols-2"
       >
         <article
@@ -263,15 +268,15 @@ const usageIntervalLabel = computed(
               v-else
               class="flex h-full items-center justify-center text-sm opacity-60"
             >
-              尚无已采集的 CPA 用量事件
+              尚无已采集的 {{ subscriptionLabel }} 用量事件
             </div>
           </div>
         </article>
       </div>
       <div v-else class="py-16 text-center opacity-60">
         {{
-          data?.account.provider === "cpa"
-            ? "尚未采集到带 API Key 的 CPA 用量事件。"
+          data?.account.provider !== "sub2api"
+            ? `尚未采集到带 API Key 的 ${subscriptionLabel} 用量事件。`
             : "尚未添加参与者。"
         }}
       </div>

@@ -109,7 +109,9 @@ def event_owner(event, bindings):
 
 
 def cpa_accounts():
-    return MonitoredAccount.objects.filter(provider="cpa").order_by("id")
+    return MonitoredAccount.objects.filter(
+        provider__in=("cpa", "gpt_load")
+    ).order_by("id")
 
 
 def register_key(*, raw_key="", observed_hash="", name=""):

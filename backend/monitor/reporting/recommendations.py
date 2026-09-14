@@ -170,7 +170,14 @@ def latest_snapshot(
         "participant",
     ).filter(
         observation__excluded_at__isnull=True,
-        **({} if account is not None and account.provider == "cpa" else {"source_sub2api_user_id": participant.sub2api_user_id, "observation__account_id__gt": 0}),
+        **(
+            {}
+            if account is not None and account.provider in {"cpa", "gpt_load"}
+            else {
+                "source_sub2api_user_id": participant.sub2api_user_id,
+                "observation__account_id__gt": 0,
+            }
+        ),
     )
     if account is not None:
         snapshots = snapshots.filter(

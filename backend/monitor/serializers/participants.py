@@ -105,7 +105,9 @@ class ParticipantWriteSerializer(serializers.ModelSerializer):
             self._ensure_account_usage_rows(current)
             if "is_owner" in validated_data or "enabled" in validated_data:
                 from ..cpa.account_owner import sync_account_owner
-                for account in MonitoredAccount.objects.filter(provider="cpa"):
+                for account in MonitoredAccount.objects.filter(
+                    provider__in=("cpa", "gpt_load")
+                ):
                     sync_account_owner(account)
             return current
 
@@ -138,7 +140,10 @@ class QuotaPoolWriteSerializer(serializers.Serializer):
 class QuotaAllocationWriteSerializer(serializers.Serializer):
     """Atomically replace the complete account partition and pool contracts."""
 
-    provider = serializers.ChoiceField(choices=("sub2api", "cpa"), default="sub2api")
+    provider = serializers.ChoiceField(
+        choices=("sub2api", "cpa", "gpt_load"),
+        default="sub2api",
+    )
     pools = QuotaPoolWriteSerializer(many=True)
 
     def validate(self, attrs):
@@ -376,7 +381,7 @@ class QuotaAllocationWriteSerializer(serializers.Serializer):
         QuotaPool.objects.exclude(id__in=retained_pool_ids).filter(
             accounts__isnull=True
         ).delete()
-        if self.validated_data["provider"] == "cpa":
+        if self.validated_data["provider"] in {"cpa", "gpt_load"}:
             from django.utils import timezone
             from ..cpa.participants import record_contract
             now = timezone.now()

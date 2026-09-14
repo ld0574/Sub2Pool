@@ -109,15 +109,22 @@ defineExpose<DialogController<[Observation]>>({ open, close });
         </table>
       </div>
       <div
-        v-if="observation?.provider === 'cpa'"
+        v-if="observation?.provider !== 'sub2api'"
         class="stats mt-4 w-full bg-base-200"
       >
         <div class="stat">
           <div class="stat-title">账号总成本增量</div>
           <div class="stat-value text-2xl">
-            {{ formatCurrency(observation.delta_cost) }}
+            {{ formatCurrency(observation?.delta_cost) }}
           </div>
-          <div class="stat-desc">来自连接后采集的 CPA usage 事件</div>
+          <div class="stat-desc">
+            来自接入后采集的
+            {{
+              observation?.provider === "gpt_load"
+                ? "GPT-Load 日志"
+                : "CPA usage 事件"
+            }}
+          </div>
         </div>
       </div>
       <div

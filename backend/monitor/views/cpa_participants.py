@@ -69,8 +69,8 @@ def cpa_account(request, *, enabled_only=True):
         account = monitored_account_query(request, enabled_only=enabled_only)
     except ValueError as exc:
         raise serializers.ValidationError(str(exc)) from exc
-    if account is None or account.provider != "cpa":
-        raise serializers.ValidationError("请选择已授权的 CPA 账号")
+    if account is None or account.provider not in {"cpa", "gpt_load"}:
+        raise serializers.ValidationError("请选择已授权的订阅渠道账号")
     return account
 
 
@@ -119,12 +119,27 @@ class BindingWrite(serializers.Serializer):
 
 class CPAKeyListView(CPAAdminView):
     def get(self, request):
+        provider = request.query_params.get("provider", "cpa")
+        if provider not in {"cpa", "gpt_load"}:
+            raise serializers.ValidationError("渠道参数无效")
+        if provider == "gpt_load":
+            from ..gpt_load.usage import sync_access_keys
+            from ..integrations.gpt_load import GPTLoadClient, GPTLoadError
+
+            try:
+                with GPTLoadClient(AppSettings.load()) as client:
+                    sync_access_keys(client)
+            except (GPTLoadError, ValueError) as exc:
+                return error(str(exc), 502)
         keys = list(
-            CPAAPIKey.objects.prefetch_related("bindings__participant").order_by("id")
+            CPAAPIKey.objects.filter(source=provider)
+            .prefetch_related("bindings__participant")
+            .order_by("id")
         )
         known = {key.key_hash for key in keys}
         observed = (
-            CPAUsageEvent.objects.exclude(api_key_hash="")
+            CPAUsageEvent.objects.filter(source=provider)
+            .exclude(api_key_hash="")
             .exclude(api_key_hash__in=known)
             .order_by()
             .values("api_key_hash", "api_key_hint")
@@ -150,10 +165,30 @@ class CPAKeyListView(CPAAdminView):
         )
 
     def post(self, request):
+        provider = request.query_params.get("provider", "cpa")
+        if provider not in {"cpa", "gpt_load"}:
+            raise serializers.ValidationError("渠道参数无效")
         serializer = BindingWrite(data=request.data)
         serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        if provider == "gpt_load" and values.get("raw_key"):
+            raise serializers.ValidationError(
+                "GPT-Load 只能绑定从管理 API 同步的 Access Key"
+            )
+        observed_hash = values.get("observed_hash")
+        if observed_hash and not (
+            CPAAPIKey.objects.filter(
+                source=provider,
+                key_hash=observed_hash,
+            ).exists()
+            or CPAUsageEvent.objects.filter(
+                source=provider,
+                api_key_hash=observed_hash,
+            ).exists()
+        ):
+            raise serializers.ValidationError("该 Key 不属于当前渠道")
         return ok(
-            binding_data(bind_key(user=request.user, **serializer.validated_data)), 201
+            binding_data(bind_key(user=request.user, **values)), 201
         )
 
 

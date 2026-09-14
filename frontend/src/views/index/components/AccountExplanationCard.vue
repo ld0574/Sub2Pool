@@ -12,7 +12,11 @@ defineProps<{
     <div class="card-body">
       <h2 class="card-title">
         <AppIcon name="information-circle" class="size-5" />{{
-          data.selected_provider === "cpa" ? "CPA 计费说明" : "账本说明"
+          data.selected_provider === "cpa"
+            ? "CPA 计费说明"
+            : data.selected_provider === "gpt_load"
+              ? "GPT-Load 计费说明"
+              : "账本说明"
         }}
       </h2>
       <p
@@ -22,6 +26,14 @@ defineProps<{
         用量成本由本地持续消费 CPA usage
         队列后估算。普通请求使用模型基础价格；只有 fast/priority 请求应用 FAST
         倍率。API Key 仅以本地哈希和末尾提示分组。
+      </p>
+      <p
+        v-else-if="data.selected_provider === 'gpt_load'"
+        class="text-sm leading-6 opacity-70"
+      >
+        用量从 GPT-Load 请求日志增量同步，费用使用日志冻结的 Nano-USD
+        计价结果。切换前的 CPA 请求和切换后的 GPT-Load
+        请求保留在同一账号账本中，并按当前官方周期连续累计。
       </p>
       <p
         v-else-if="data.weekly_quota_model === 'time_varying'"

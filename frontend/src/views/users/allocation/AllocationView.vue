@@ -29,8 +29,18 @@ interface ContextMenuState {
 }
 
 const auth = useAuthStore();
-const provider = ref<"sub2api" | "cpa">(
-  useRoute().query.provider === "cpa" ? "cpa" : "sub2api",
+const requestedProvider = useRoute().query.provider;
+const provider = ref<"sub2api" | "cpa" | "gpt_load">(
+  requestedProvider === "cpa" || requestedProvider === "gpt_load"
+    ? requestedProvider
+    : "sub2api",
+);
+const providerLabel = computed(() =>
+  provider.value === "gpt_load"
+    ? "GPT-Load"
+    : provider.value === "cpa"
+      ? "CPA"
+      : "Sub2API",
 );
 const loading = ref(true);
 const saving = ref(false);
@@ -392,8 +402,8 @@ async function save() {
     );
     messageTone.value = "success";
     message.value =
-      provider.value === "cpa"
-        ? "CPA 额度池已保存，新份额从现在生效，等待下次观测更新额度。"
+      provider.value !== "sub2api"
+        ? `${provider.value === "gpt_load" ? "GPT-Load" : "CPA"} 额度池已保存，新份额从现在生效，等待下次观测更新额度。`
         : "额度池和参与者份额已保存。现有账号观测会按新分配方案立即重算余额建议。";
   } catch (error) {
     messageTone.value = "error";
@@ -429,6 +439,7 @@ onUnmounted(() => {
     >
       <option value="sub2api">Sub2API</option>
       <option value="cpa">CPA</option>
+      <option value="gpt_load">GPT-Load</option>
     </select>
     <div class="grow">
       <div class="breadcrumbs text-sm">
@@ -531,9 +542,13 @@ onUnmounted(() => {
         <AppIcon name="user-group" class="size-9 opacity-30" />
         <h2 class="mt-2 card-title">尚未添加参与者</h2>
         <p class="text-sm opacity-60">
-          先添加 Sub2API 参与者，表格才会出现分配列。
+          先添加参与者，表格才会出现 {{ providerLabel }} 分配列。
         </p>
-        <RouterLink v-if="auth.isStaff" to="/participants" class="btn btn-sm">
+        <RouterLink
+          v-if="auth.isStaff"
+          :to="{ path: '/participants', query: { provider } }"
+          class="btn btn-sm"
+        >
           前往参与者
         </RouterLink>
       </div>
@@ -682,8 +697,14 @@ onUnmounted(() => {
                     </span>
                   </div>
                   <div class="mt-1 text-xs font-normal opacity-50">
-                    上游 ID
-                    {{ accountsById.get(accountId)?.external_account_id }}
+                    {{
+                      provider === "sub2api"
+                        ? "上游 ID " +
+                          accountsById.get(accountId)?.external_account_id
+                        : providerLabel +
+                          " " +
+                          accountsById.get(accountId)?.source_account_id
+                    }}
                   </div>
                 </div>
               </div>

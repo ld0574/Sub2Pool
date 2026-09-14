@@ -167,7 +167,7 @@ defineExpose({ open, close });
             <div class="min-w-0 grow">
               <h3 class="font-semibold">参与者身份</h3>
               <p class="mt-1 text-xs leading-relaxed opacity-60">
-                各额度池的百分比分配统一在“额度分配”页面维护。CPA Key
+                各额度池的百分比分配统一在“额度分配”页面维护。订阅渠道 Key
                 在参与者页面单独绑定，Sub2API 用户身份可选。
               </p>
               <label class="label mt-3 w-fit gap-2">
@@ -179,7 +179,7 @@ defineExpose({ open, close });
                 设为车主
               </label>
               <p class="mt-2 text-xs leading-relaxed opacity-60">
-                CPA 池内唯一启用的车主接收未匹配成员 Key 的新请求，绑定 Key
+                订阅渠道池内唯一启用的车主接收未匹配成员 Key 的新请求，绑定 Key
                 的成员优先。身份变更从保存时刻生效，历史请求可单独认领。
               </p>
             </div>

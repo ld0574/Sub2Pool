@@ -56,7 +56,7 @@ defineExpose({ open, close });
             ><CostBreakdownValue
               :total="data.capacity_summary.cycle.start_cost_usd"
               :breakdown="data.capacity_summary.cycle.start_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
             />
             /
             {{
@@ -66,7 +66,7 @@ defineExpose({ open, close });
             ><CostBreakdownValue
               :total="data.capacity_summary.cycle.end_cost_usd"
               :breakdown="data.capacity_summary.cycle.end_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
             />
             /
             {{
@@ -84,12 +84,12 @@ defineExpose({ open, close });
             ((<CostBreakdownValue
               :total="data.capacity_summary.cycle.end_cost_usd"
               :breakdown="data.capacity_summary.cycle.end_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
               terms-only
             />) − (<CostBreakdownValue
               :total="data.capacity_summary.cycle.start_cost_usd"
               :breakdown="data.capacity_summary.cycle.start_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
               terms-only
             />)) ÷ ({{
               formatPercent(data.capacity_summary.cycle.end_percent)
@@ -117,7 +117,7 @@ defineExpose({ open, close });
             ><CostBreakdownValue
               :total="data.capacity_summary.today.start_cost_usd"
               :breakdown="data.capacity_summary.today.start_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
             />
             /
             {{
@@ -127,7 +127,7 @@ defineExpose({ open, close });
             ><CostBreakdownValue
               :total="data.capacity_summary.today.end_cost_usd"
               :breakdown="data.capacity_summary.today.end_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
             />
             /
             {{
@@ -145,12 +145,12 @@ defineExpose({ open, close });
             ((<CostBreakdownValue
               :total="data.capacity_summary.today.end_cost_usd"
               :breakdown="data.capacity_summary.today.end_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
               terms-only
             />) − (<CostBreakdownValue
               :total="data.capacity_summary.today.start_cost_usd"
               :breakdown="data.capacity_summary.today.start_cost_breakdown"
-              :show-corrections="data.account.provider !== 'cpa'"
+              :show-corrections="data.account.provider === 'sub2api'"
               terms-only
             />)) ÷ ({{
               formatPercent(data.capacity_summary.today.end_percent)

@@ -139,7 +139,7 @@ export interface QuotaPoolAllocation {
   total_share_percent: number;
 }
 export interface QuotaAllocationData {
-  provider?: "sub2api" | "cpa";
+  provider?: "sub2api" | "cpa" | "gpt_load";
   accounts: MonitoredAccount[];
   participants: QuotaAllocationParticipant[];
   pools: QuotaPoolAllocation[];
@@ -151,7 +151,7 @@ export interface QuotaAllocationWritePool {
   allocations: QuotaPoolAllocationEntry[];
 }
 export interface QuotaAllocationWrite {
-  provider?: "sub2api" | "cpa";
+  provider?: "sub2api" | "cpa" | "gpt_load";
   pools: QuotaAllocationWritePool[];
 }
 export interface Sub2APIUserOption {

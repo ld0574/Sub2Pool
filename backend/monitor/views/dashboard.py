@@ -221,8 +221,12 @@ class DashboardView(PageAccessAPIView):
             "configured": bool(
                 account
                 and (
-                    config.cpa_management_key_encrypted
-                    if account.provider == "cpa"
+                    (
+                        config.cpa_management_key_encrypted
+                        if account.provider == "cpa"
+                        else config.gpt_load_auth_key_encrypted
+                    )
+                    if account.provider in {"cpa", "gpt_load"}
                     else config.sub2api_admin_token_encrypted
                 )
             ),
@@ -230,7 +234,7 @@ class DashboardView(PageAccessAPIView):
             "accounts": [_account_data(item) for item in accounts],
             "selected_account_id": account.id if account else None,
             "selected_provider": account.provider if account else None,
-            "cpa_summary": pool_summary(request.user, account, config) if account is not None and account.provider == "cpa" else None,
+            "cpa_summary": pool_summary(request.user, account, config) if account is not None and account.provider in {"cpa", "gpt_load"} else None,
             "last_local_check_at": iso(
                 account.last_local_check_at if account else config.last_local_check_at
             ),
@@ -247,8 +251,12 @@ class DashboardView(PageAccessAPIView):
             "quota_query_mode": account.quota_query_mode if account else None,
             "sub2api_admin_url": _admin_url(config.sub2api_base_url),
             "upstream_admin_url": _admin_url(
-                config.cpa_base_url
-                if account is not None and account.provider == "cpa"
+                (
+                    config.cpa_base_url
+                    if account.provider == "cpa"
+                    else config.gpt_load_base_url
+                )
+                if account is not None and account.provider in {"cpa", "gpt_load"}
                 else config.sub2api_base_url
             ),
             "fast_correction_enabled": bool(

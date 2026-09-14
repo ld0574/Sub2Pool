@@ -4,8 +4,9 @@ from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.serializers import ValidationError
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.serializers import ValidationError
 
 from ..billing_correction.rules import CORRECTION_SETTINGS
 from ..access import HasPageAccess, visible_accounts_for
@@ -14,10 +15,12 @@ from ..cpa.collector_state import get_collector_status
 from ..cpa.usage import refresh_cpa_history
 from ..history_state import LeaseLostError, fenced_fact_write
 from ..integrations.cpa import CPAClient, CPAError, CPAUsageSubscriber
+from ..integrations.gpt_load import GPTLoadClient, GPTLoadError
 from ..integrations.sub2api import Sub2APIClient, Sub2APIError
 from ..models import (
     AccountParticipant,
     AppSettings,
+    CPAAccountCollectionInterval,
     MonitoredAccount,
     Observation,
     PagePermission,
@@ -29,6 +32,7 @@ from ..replay import rebuild_account
 from ..serializers import (
     AppSettingsSerializer,
     CPAConnectionSerializer,
+    GPTLoadConnectionSerializer,
     MonitoredAccountSerializer,
     Sub2APIConnectionSerializer,
 )
@@ -109,6 +113,22 @@ def _temporary_cpa_subscriber(
         config,
         base_url=values.get("cpa_base_url", config.cpa_base_url),
         management_key=values.get("cpa_management_key") or None,
+        request_timeout_seconds=values.get(
+            "request_timeout_seconds",
+            config.request_timeout_seconds,
+        ),
+        verify_tls=values.get("verify_tls", config.verify_tls),
+    )
+
+
+def _temporary_gpt_load_client(
+    config: AppSettings,
+    values: dict,
+) -> GPTLoadClient:
+    return GPTLoadClient(
+        config,
+        base_url=values.get("gpt_load_base_url", config.gpt_load_base_url),
+        auth_key=values.get("gpt_load_auth_key") or None,
         request_timeout_seconds=values.get(
             "request_timeout_seconds",
             config.request_timeout_seconds,
@@ -287,6 +307,142 @@ class TestCPAView(AdminAPIView):
         except (CPAError, ValueError) as exc:
             return error(str(exc), 502)
         return ok(result)
+
+
+class GPTLoadAccountListView(AdminAPIView):
+    def post(self, request):
+        serializer = GPTLoadConnectionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error("连接参数格式无效", details=serializer.errors)
+        try:
+            with _temporary_gpt_load_client(
+                AppSettings.load(),
+                serializer.validated_data,
+            ) as client:
+                accounts = client.list_source_accounts()
+        except (GPTLoadError, ValueError) as exc:
+            return error(str(exc), 502)
+        return ok(accounts)
+
+
+class TestGPTLoadView(AdminAPIView):
+    def post(self, request):
+        serializer = GPTLoadConnectionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error("连接参数格式无效", details=serializer.errors)
+        try:
+            with _temporary_gpt_load_client(
+                AppSettings.load(),
+                serializer.validated_data,
+            ) as client:
+                result = client.test_connection()
+        except (GPTLoadError, ValueError) as exc:
+            return error(str(exc), 502)
+        return ok(result)
+
+
+class GPTLoadCutoverWrite(serializers.Serializer):
+    group_id = serializers.IntegerField(min_value=1)
+    credential_id = serializers.IntegerField(min_value=1)
+    name = serializers.CharField(required=False, max_length=160)
+
+
+class GPTLoadCutoverView(AdminAPIView):
+    """Continue one CPA account on GPT-Load without changing its fact key."""
+
+    def post(self, request, account_id: int):
+        payload = GPTLoadCutoverWrite(data=request.data)
+        payload.is_valid(raise_exception=True)
+        values = payload.validated_data
+
+        account = MonitoredAccount.objects.filter(pk=account_id).first()
+        if account is None:
+            return error("监控账号不存在", 404)
+        if account.provider != "cpa":
+            return error("只有 CPA 账号可以原地续接到 GPT-Load", 409)
+        fact_key = account.fact_key
+
+        config = AppSettings.load()
+        try:
+            with GPTLoadClient(config) as client:
+                sources = client.list_source_accounts()
+        except (GPTLoadError, ValueError) as exc:
+            return error(str(exc), 502)
+        selected = next(
+            (
+                item
+                for item in sources
+                if item["group_id"] == values["group_id"]
+                and item["credential_id"] == values["credential_id"]
+            ),
+            None,
+        )
+        if selected is None:
+            return error("GPT-Load 中未找到所选订阅账号", 409)
+
+        try:
+            with fenced_fact_write([fact_key]):
+                with transaction.atomic():
+                    account = MonitoredAccount.objects.select_for_update().get(
+                        pk=account_id
+                    )
+                    if account.provider != "cpa":
+                        raise ValidationError("只有 CPA 账号可以原地续接到 GPT-Load")
+                    cutover_at = timezone.now()
+                    duplicate = MonitoredAccount.objects.filter(
+                        gpt_load_credential_id=values["credential_id"]
+                    ).exclude(pk=account.pk)
+                    if duplicate.exists():
+                        raise ValidationError("该 GPT-Load Credential 已被其他账号使用")
+                    open_interval = account.cpa_collection_intervals.select_for_update().filter(
+                        disconnected_at__isnull=True
+                    ).first()
+                    if open_interval is not None:
+                        open_interval.disconnected_at = max(
+                            cutover_at,
+                            open_interval.connected_at,
+                        )
+                        open_interval.end_reliable = True
+                        open_interval.save(
+                            update_fields=[
+                                "disconnected_at",
+                                "end_reliable",
+                                "updated_at",
+                            ]
+                        )
+                    account.provider = "gpt_load"
+                    account.gpt_load_group_id = values["group_id"]
+                    account.gpt_load_credential_id = values["credential_id"]
+                    account.gpt_load_cutover_at = cutover_at
+                    account.gpt_load_logs_synced_through = None
+                    account.name = values.get("name") or account.name
+                    account.quota_query_mode = "direct"
+                    account.save(
+                        update_fields=[
+                            "provider",
+                            "gpt_load_group_id",
+                            "gpt_load_credential_id",
+                            "gpt_load_cutover_at",
+                            "gpt_load_logs_synced_through",
+                            "name",
+                            "quota_query_mode",
+                            "updated_at",
+                        ]
+                    )
+                    CPAAccountCollectionInterval.objects.create(
+                        account=account,
+                        session_key=f"gpt-load-{values['group_id']}-{values['credential_id']}",
+                        connected_at=cutover_at,
+                        end_reliable=True,
+                    )
+                    from ..cpa.participants import record_contract
+
+                    record_contract(account, cutover_at)
+        except ValidationError as exc:
+            detail = exc.detail[0] if isinstance(exc.detail, list) else exc.detail
+            return error(str(detail), 409)
+        account.refresh_from_db()
+        return ok(MonitoredAccountSerializer(account).data)
 
 
 

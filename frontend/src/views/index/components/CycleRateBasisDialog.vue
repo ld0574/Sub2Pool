@@ -63,9 +63,11 @@ defineExpose({ open, close });
           :help="
             data.selected_provider === 'cpa'
               ? 'CPA 使用独立保存的采集区间、本地估算成本和上游整数进度；区间首条未排除观测作为数值基线，不把百分比记录当作连接状态，也不补造区间外用量。'
-              : data.weekly_quota_model === 'constant_average'
-                ? '平均恒定模式直接使用周期起点至当前观测的累计成本和已用百分比。'
-                : '时变模式同时估计连续容量路径、整数显示规则和各账号归属；确定性边界用于阻止概率估计越过硬约束。'
+              : data.selected_provider === 'gpt_load'
+                ? 'GPT-Load 使用同一账号账本内的历史 CPA 请求与切换后的 GPT-Load 精确日志成本，并结合官方整数进度连续估算当前周期容量。'
+                : data.weekly_quota_model === 'constant_average'
+                  ? '平均恒定模式直接使用周期起点至当前观测的累计成本和已用百分比。'
+                  : '时变模式同时估计连续容量路径、整数显示规则和各账号归属；确定性边界用于阻止概率估计越过硬约束。'
           "
         />
         <CalculationBasisTimeline
@@ -76,14 +78,14 @@ defineExpose({ open, close });
             ><CostBreakdownValue
               :total="0"
               :breakdown="data.cycle.start_cost_breakdown"
-              :show-corrections="data.selected_provider !== 'cpa'"
+              :show-corrections="data.selected_provider === 'sub2api'"
             />
             / {{ formatPercent(0) }}</template
           ><template #end-value
             ><CostBreakdownValue
               :total="data.cycle.selected_total_cost"
               :breakdown="data.cycle.selected_total_cost_breakdown"
-              :show-corrections="data.selected_provider !== 'cpa'"
+              :show-corrections="data.selected_provider === 'sub2api'"
             />
             / 显示
             {{ formatPercent(data.cycle.interval_used_percent) }}</template
@@ -102,7 +104,7 @@ defineExpose({ open, close });
             (<CostBreakdownValue
               :total="data.cycle.selected_total_cost"
               :breakdown="data.cycle.selected_total_cost_breakdown"
-              :show-corrections="data.selected_provider !== 'cpa'"
+              :show-corrections="data.selected_provider === 'sub2api'"
               terms-only
             />) ÷ {{ formatPercent(data.cycle.interval_used_percent) }} =
             {{ formatCurrency(data.cycle.effective_usd_per_percent) }} / 1%
@@ -237,7 +239,7 @@ defineExpose({ open, close });
             class="text-xs opacity-60"
           >
             {{
-              data.selected_provider === "cpa"
+              data.selected_provider !== "sub2api"
                 ? "总成本聚合差额"
                 : "总成本与用户成本合计差额"
             }}：

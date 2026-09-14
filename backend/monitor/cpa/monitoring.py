@@ -86,7 +86,11 @@ def _persist_cpa_capture(
         write_status="complete",
         reconciliation_status="residual" if total_cost > ZERO else "reconciled",
         provenance={
-            "source": "cpa_usage_stream",
+            "source": (
+                "gpt_load_logs"
+                if account.provider == "gpt_load"
+                else "cpa_usage_stream"
+            ),
             "cost_estimate": True,
             "participants": False,
         },
@@ -108,11 +112,15 @@ def _persist_cpa_capture(
         interval_cost_started_at=interval_started_at,
         interval_standard_cost=interval_cost,
         interval_actual_cost=interval_cost,
-        interval_cost_source="cpa_usage_stream",
+        interval_cost_source=(
+            "gpt_load_logs"
+            if account.provider == "gpt_load"
+            else "cpa_usage_stream"
+        ),
         effective_usd_per_percent=config.initial_usd_per_percent,
         sample_note="等待派生计算",
         raw_window={
-            "provider": "cpa",
+            "provider": account.provider,
             "slot": window.slot,
             "window_seconds": window.window_seconds,
             "reset_after_seconds": window.reset_after_seconds,
@@ -121,7 +129,11 @@ def _persist_cpa_capture(
             "sampled_at": window.sampled_at,
             "cost_window_started_at": cost_started_at.isoformat(),
             "cost_window_ended_at": observed_at.isoformat(),
-            "interval_cost_source": "cpa_usage_stream",
+            "interval_cost_source": (
+                "gpt_load_logs"
+                if account.provider == "gpt_load"
+                else "cpa_usage_stream"
+            ),
             "cost_estimate": True,
             **(raw_metadata or {}),
         },

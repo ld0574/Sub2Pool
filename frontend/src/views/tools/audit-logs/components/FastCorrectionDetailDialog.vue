@@ -140,7 +140,7 @@ defineExpose<DialogController<[Observation]> & { refresh: typeof refresh }>({
             {{ calculationErrors[data.observation_id] }}
           </p>
           <button
-            v-if="editable && selected && selected.provider !== 'cpa'"
+            v-if="editable && selected && selected.provider === 'sub2api'"
             type="button"
             class="btn btn-primary btn-sm"
             :disabled="pendingIds.has(data.observation_id)"

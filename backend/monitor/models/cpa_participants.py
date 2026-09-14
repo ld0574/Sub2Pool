@@ -12,7 +12,23 @@ class CPAAPIKey(models.Model):
     key_hash = models.CharField(max_length=64, unique=True)
     hint = models.CharField(max_length=4)
     name = models.CharField(max_length=80, blank=True)
+    source = models.CharField(
+        max_length=16,
+        choices=(("cpa", "CPA"), ("gpt_load", "GPT-Load")),
+        default="cpa",
+        db_index=True,
+    )
+    external_key_id = models.PositiveBigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_key_id"],
+                condition=Q(external_key_id__isnull=False),
+                name="unique_gateway_external_key",
+            )
+        ]
 
 
 class CPAKeyBinding(models.Model):

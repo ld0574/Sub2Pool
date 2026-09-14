@@ -344,7 +344,10 @@ def rebuild_account(
 
     config = config or AppSettings.load()
     monitored_account = (
-        MonitoredAccount.objects.filter(pk=-account_id, provider="cpa").first()
+        MonitoredAccount.objects.filter(
+            pk=-account_id,
+            provider__in=("cpa", "gpt_load"),
+        ).first()
         if account_id < 0
         else MonitoredAccount.objects.filter(
             external_account_id=account_id,
@@ -357,12 +360,18 @@ def rebuild_account(
         else PRO_20X_CAPACITY_PROFILE
     )
     collection_intervals: list[CPAAccountCollectionInterval] | None = None
-    if monitored_account is not None and monitored_account.provider == "cpa":
+    if monitored_account is not None and monitored_account.provider in {
+        "cpa",
+        "gpt_load",
+    }:
         collection_intervals = list(
             CPAAccountCollectionInterval.objects.filter(account=monitored_account)
             .order_by("connected_at", "id")
         )
-    if monitored_account is not None and monitored_account.provider == "cpa":
+    if monitored_account is not None and monitored_account.provider in {
+        "cpa",
+        "gpt_load",
+    }:
         from ..cpa.participants import materialize_participants
         materialize_participants(monitored_account, config)
     all_observations = list(

@@ -243,7 +243,7 @@ function isAtOrAfter(row: Observation, start: Observation) {
                     {{ formatCorrectionCurrency(correctionTotal(row)) }}
                   </button>
                   <button
-                    v-else-if="editable && row.provider !== 'cpa'"
+                    v-else-if="editable && row.provider === 'sub2api'"
                     type="button"
                     class="inline-flex link cursor-pointer items-center gap-1 font-medium link-hover disabled:cursor-wait disabled:opacity-70"
                     :disabled="fastCorrectionPendingIds.has(row.id)"

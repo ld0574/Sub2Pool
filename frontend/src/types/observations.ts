@@ -7,7 +7,7 @@ export interface Observation extends CorrectionBreakdown {
   id: number;
   observed_at: string;
   source: string;
-  provider: "sub2api" | "cpa";
+  provider: "sub2api" | "cpa" | "gpt_load";
   account_id: number;
   attribution_started_at: string | null;
   upstream_resets_at: string;
@@ -102,7 +102,7 @@ export interface MonitorSchedule {
   run_in_progress: boolean;
   accounts: Array<{
     id: number;
-    provider: "sub2api" | "cpa";
+    provider: "sub2api" | "cpa" | "gpt_load";
     source_account_id: string;
     external_account_id: number | null;
     name: string;

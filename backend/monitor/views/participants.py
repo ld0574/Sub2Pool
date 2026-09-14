@@ -42,7 +42,7 @@ def quota_allocation_data(user, provider="sub2api") -> dict:
             "external_account_id",
         )
     )
-    if provider == "cpa" and not user.is_staff:
+    if provider in {"cpa", "gpt_load"} and not user.is_staff:
         from ..access import visible_accounts_for
         allowed = set(visible_accounts_for(user).values_list("id", flat=True))
         accounts = [account for account in accounts if account.id in allowed]
@@ -63,7 +63,7 @@ def quota_allocation_data(user, provider="sub2api") -> dict:
     )
     if provider == "sub2api":
         participants = [p for p in participants if p.sub2api_user_id is not None]
-    if provider == "cpa" and not user.is_staff:
+    if provider in {"cpa", "gpt_load"} and not user.is_staff:
         participants = list(Participant.objects.filter(pool_allocations__pool__in=pools).distinct())
     visible_participant_ids = {
         participant.id for participant in participants
@@ -79,7 +79,13 @@ def quota_allocation_data(user, provider="sub2api") -> dict:
                 "sub2api_username": participant.sub2api_username if provider == "sub2api" else "",
                 "sub2api_email": participant.sub2api_email if provider == "sub2api" else "",
                 "sub2api_identity": (
-                    "CPA" if provider == "cpa" else participant.sub2api_username
+                    (
+                        "GPT-Load"
+                        if provider == "gpt_load"
+                        else "CPA"
+                    )
+                    if provider in {"cpa", "gpt_load"}
+                    else participant.sub2api_username
                     or participant.sub2api_email
                     or f"账号 {participant.sub2api_user_id}"
                 ),
@@ -137,7 +143,7 @@ class QuotaAllocationView(PageAccessAPIView):
 
     def get(self, request):
         provider = request.query_params.get("provider", "sub2api")
-        if provider not in {"sub2api", "cpa"}:
+        if provider not in {"sub2api", "cpa", "gpt_load"}:
             return error("渠道参数无效")
         return ok(quota_allocation_data(request.user, provider))
 

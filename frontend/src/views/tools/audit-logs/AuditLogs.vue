@@ -210,7 +210,7 @@ async function processFastCorrectionQueue() {
 function calculateFastCorrection(row: Observation) {
   if (
     !auth.isStaff ||
-    row.provider === "cpa" ||
+    row.provider !== "sub2api" ||
     correctionCalculated(row) ||
     fastCorrectionPendingIds.value.has(row.id)
   )
@@ -316,8 +316,8 @@ async function rebuildCalculations() {
     !(await confirmDialog.value?.open({
       title: "重建当前区间计算？",
       message:
-        selectedAccount.value?.provider === "cpa"
-          ? "系统会保留全部原始采样、usage 事实、采集区间、排除记录和管理员起点区间，并基于这些本地事实重新计算；不会补取连接前或断线期间的调用。"
+        selectedAccount.value?.provider !== "sub2api"
+          ? "系统会保留全部原始采样、请求事实、采集区间、排除记录和管理员起点区间，并基于这些本地事实重新计算；不会补取接入前或采集缺口期间的调用。"
           : "系统会保留全部原始采样、排除记录和管理员起点区间，从当前区间起点重新计算成本增量、百分比增量、折算率与参与者归属。",
       confirmLabel: "开始重建",
       tone: "warning",

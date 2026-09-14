@@ -239,8 +239,17 @@ class ObservationFastCorrectionDetailView(PageAccessAPIView):
             observations = observations.filter(account_id__in=[item.fact_key for item in visible_accounts_for(request.user)])
         observation = get_object_or_404(observations, pk=observation_id)
         source_account = MonitoredAccount.for_fact_key(observation.account_id)
-        if observation.account_id < 0 or (source_account is not None and source_account.provider == "cpa"):
-            return error("CPA 观测不使用 Sub2API 修正明细", 400)
+        if observation.account_id < 0 or (
+            source_account is not None
+            and source_account.provider in {"cpa", "gpt_load"}
+        ):
+            label = (
+                "GPT-Load"
+                if source_account is not None
+                and source_account.provider == "gpt_load"
+                else "CPA"
+            )
+            return error(f"{label} 观测不使用 Sub2API 修正明细", 400)
         correction = interval_corrections(observation, config, include_models=True)
         visible_ids = visible_participant_ids(request.user)
         participant_queryset = Participant.objects.filter(sub2api_user_id__in=correction.users)
@@ -312,8 +321,9 @@ class ObservationFastCorrectionCalculateView(AdminAPIView):
         config = AppSettings.load()
         observation = get_object_or_404(Observation, pk=observation_id)
         account = MonitoredAccount.for_fact_key(observation.account_id)
-        if account is not None and account.provider == "cpa":
-            return error("CPA 请求成本已在采集时按服务档位计价", 400)
+        if account is not None and account.provider in {"cpa", "gpt_load"}:
+            label = "GPT-Load" if account.provider == "gpt_load" else "CPA"
+            return error(f"{label} 请求成本已在采集时计价", 400)
         try:
             result = calculate_missing_fast_correction(observation, config)
         except ValueError as exc:

@@ -58,6 +58,8 @@ from .views.security import (
 from .views.settings import (
     CPAAccountListView,
     CPACollectorStatusView,
+    GPTLoadAccountListView,
+    GPTLoadCutoverView,
     MonitoredAccountDetailView,
     MonitoredAccountListView,
     MyAPIKeyView,
@@ -67,6 +69,7 @@ from .views.settings import (
     ReadOnlyAPIKeyView,
     TestEmailView,
     TestCPAView,
+    TestGPTLoadView,
     TestSub2APIView,
 )
 from .views.statistics import (
@@ -179,6 +182,7 @@ urlpatterns = [
     path("settings", SettingsView.as_view()),
     path("settings/openai-accounts", OpenAIAccountListView.as_view()),
     path("settings/cpa-accounts", CPAAccountListView.as_view()),
+    path("settings/gpt-load-accounts", GPTLoadAccountListView.as_view()),
     path(
         "settings/cpa-collector-status",
         CPACollectorStatusView.as_view(),
@@ -190,6 +194,11 @@ urlpatterns = [
     ),
     path("settings/test-sub2api", TestSub2APIView.as_view()),
     path("settings/test-cpa", TestCPAView.as_view()),
+    path("settings/test-gpt-load", TestGPTLoadView.as_view()),
+    path(
+        "settings/monitored-accounts/<int:account_id>/gpt-load-cutover",
+        GPTLoadCutoverView.as_view(),
+    ),
     path("settings/test-email", TestEmailView.as_view()),
     path("settings/readonly-api-key", ReadOnlyAPIKeyView.as_view()),
     path("settings/my-api-key", MyAPIKeyView.as_view()),

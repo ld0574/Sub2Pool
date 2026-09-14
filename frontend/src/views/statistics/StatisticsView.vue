@@ -139,7 +139,12 @@ onMounted(initialize);
     <button class="btn btn-sm" :disabled="loading" @click="load">
       <AppIcon name="arrow-path" class="size-4" />刷新
     </button>
-    <template v-if="data?.account.provider === 'cpa'">
+    <template
+      v-if="
+        data?.account.provider === 'cpa' ||
+        data?.account.provider === 'gpt_load'
+      "
+    >
       <RouterLink
         class="btn btn-sm"
         :to="{
@@ -149,7 +154,7 @@ onMounted(initialize);
         >请求明细<AppIcon name="arrow-up-tray" class="size-4"
       /></RouterLink>
       <button
-        v-if="auth.isStaff"
+        v-if="auth.isStaff && data.account.provider === 'cpa'"
         class="btn btn-sm"
         @click="pricingDialog?.open()"
       >
@@ -164,7 +169,11 @@ onMounted(initialize);
   </div>
 
   <div
-    v-if="data?.account.provider === 'cpa' && unpricedCount"
+    v-if="
+      (data?.account.provider === 'cpa' ||
+        data?.account.provider === 'gpt_load') &&
+      unpricedCount
+    "
     class="col-span-12 alert alert-warning"
     role="status"
   >
@@ -174,14 +183,16 @@ onMounted(initialize);
       </p>
       <p class="text-sm">
         {{
-          auth.isStaff
-            ? "可查看缺价模型并同步基础价格，保存后自动重算历史。"
-            : "请联系管理员同步模型价格。"
+          data?.account.provider === "gpt_load"
+            ? "费用以 GPT-Load 日志中的冻结计价结果为准，请在 GPT-Load 中补齐对应模型价格。"
+            : auth.isStaff
+              ? "可查看缺价模型并同步基础价格，保存后自动重算历史。"
+              : "请联系管理员同步模型价格。"
         }}
       </p>
     </div>
     <button
-      v-if="auth.isStaff"
+      v-if="auth.isStaff && data?.account.provider === 'cpa'"
       class="btn btn-sm"
       @click="pricingDialog?.open(true)"
     >
@@ -199,6 +210,7 @@ onMounted(initialize);
   <CPAPoolCard
     v-if="data?.cpa_summary"
     :data="data.cpa_summary"
+    :provider="data.account.provider === 'gpt_load' ? 'gpt_load' : 'cpa'"
     :loading="loading"
     @refresh="load"
   />
@@ -212,11 +224,11 @@ onMounted(initialize);
   <CapacityBasisDialog v-if="data" ref="basisDialog" :data="data" />
   <DailyClosingBasisDialog
     ref="closingBasisDialog"
-    :show-corrections="data?.account?.provider !== 'cpa'"
+    :show-corrections="data?.account?.provider === 'sub2api'"
   />
   <APIUsageBreakdownDialog ref="apiUsageDialog" />
   <CPAModelPricingDialog
-    v-if="auth.isStaff"
+    v-if="auth.isStaff && data?.account.provider === 'cpa'"
     ref="pricingDialog"
     :account-id="selectedAccountId ?? undefined"
     @saved="pricesSaved"

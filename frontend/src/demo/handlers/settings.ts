@@ -89,16 +89,25 @@ export function handleSettings({
     return ok(state.monitoredAccounts);
   }
   if (method === "POST" && pathname === "settings/monitored-accounts") {
-    const provider = payload.provider === "cpa" ? "cpa" : "sub2api";
+    const provider =
+      payload.provider === "cpa" || payload.provider === "gpt_load"
+        ? payload.provider
+        : "sub2api";
     const externalAccountId =
       provider === "sub2api" ? Number(payload.external_account_id) : null;
     const cpaAuthIndex =
       provider === "cpa" ? String(payload.cpa_auth_index ?? "") : null;
+    const gptLoadGroupId =
+      provider === "gpt_load" ? Number(payload.gpt_load_group_id) : null;
+    const gptLoadCredentialId =
+      provider === "gpt_load" ? Number(payload.gpt_load_credential_id) : null;
     if (
       state.monitoredAccounts.some((account) =>
         provider === "cpa"
           ? account.cpa_auth_index === cpaAuthIndex
-          : account.external_account_id === externalAccountId,
+          : provider === "gpt_load"
+            ? account.gpt_load_credential_id === gptLoadCredentialId
+            : account.external_account_id === externalAccountId,
       )
     ) {
       return fail("该上游账号已经在监控列表中", 400);
@@ -110,20 +119,31 @@ export function handleSettings({
       payload.name ??
         (provider === "cpa"
           ? `CPA Codex ${cpaAuthIndex}`
-          : `OpenAI 账号 ${externalAccountId}`),
+          : provider === "gpt_load"
+            ? `GPT-Load Credential ${gptLoadCredentialId}`
+            : `OpenAI 账号 ${externalAccountId}`),
     );
     const account: MonitoredAccount = {
       id: accountId,
       provider,
       source_account_id:
-        provider === "cpa" ? (cpaAuthIndex ?? "") : String(externalAccountId),
+        provider === "cpa"
+          ? (cpaAuthIndex ?? "")
+          : provider === "gpt_load"
+            ? `${gptLoadGroupId}:${gptLoadCredentialId}`
+            : String(externalAccountId),
       pool_id: poolId,
       external_account_id: externalAccountId,
       cpa_auth_index: cpaAuthIndex,
+      gpt_load_group_id: gptLoadGroupId,
+      gpt_load_credential_id: gptLoadCredentialId,
+      gpt_load_cutover_at:
+        provider === "gpt_load" ? new Date().toISOString() : null,
+      gpt_load_logs_synced_through: null,
       name: accountName,
       enabled: payload.enabled !== false,
       quota_query_mode:
-        provider === "cpa"
+        provider !== "sub2api"
           ? "direct"
           : payload.quota_query_mode === "direct"
             ? "direct"
@@ -162,6 +182,25 @@ export function handleSettings({
     }
     saveDemoState(state);
     return ok(account, 201);
+  }
+  const cutoverMatch =
+    /^settings\/monitored-accounts\/(\d+)\/gpt-load-cutover$/.exec(pathname);
+  if (cutoverMatch && method === "POST") {
+    const account = state.monitoredAccounts.find(
+      (item) => item.id === Number(cutoverMatch[1]),
+    );
+    if (!account) return fail("监控账号不存在", 404);
+    if (account.provider !== "cpa") {
+      return fail("只有 CPA 账号可以原地续接", 409);
+    }
+    account.provider = "gpt_load";
+    account.gpt_load_group_id = Number(payload.group_id);
+    account.gpt_load_credential_id = Number(payload.credential_id);
+    account.gpt_load_cutover_at = new Date().toISOString();
+    account.gpt_load_logs_synced_through = null;
+    account.source_account_id = `${account.gpt_load_group_id}:${account.gpt_load_credential_id}`;
+    saveDemoState(state);
+    return ok(account);
   }
   const monitoredAccountMatch = /^settings\/monitored-accounts\/(\d+)$/.exec(
     pathname,
@@ -206,6 +245,7 @@ export function handleSettings({
     const secretKeys: Record<string, true> = {
       sub2api_admin_token: true,
       cpa_management_key: true,
+      gpt_load_auth_key: true,
       smtp_password: true,
       resend_api_key: true,
     };
@@ -246,6 +286,21 @@ export function handleSettings({
       },
     ]);
   }
+  if (method === "POST" && pathname === "settings/gpt-load-accounts") {
+    return ok([
+      {
+        group_id: 11,
+        group_name: "演示 Codex 订阅组",
+        channel_id: "openai",
+        credential_id: 21,
+        email: "codex@example.test",
+        mask: "acct...demo",
+        plan_type: "Pro",
+        configured_status: "active",
+        effective_status: "available",
+      },
+    ]);
+  }
   if (method === "POST" && pathname === "settings/openai-accounts") {
     return ok([
       {
@@ -275,11 +330,15 @@ export function handleSettings({
     method === "POST" &&
     (pathname === "settings/test-sub2api" ||
       pathname === "settings/test-cpa" ||
+      pathname === "settings/test-gpt-load" ||
       pathname === "settings/test-email")
   ) {
     return ok({
       demo: true,
-      connected: pathname.endsWith("sub2api") || pathname.endsWith("test-cpa"),
+      connected:
+        pathname.endsWith("sub2api") ||
+        pathname.endsWith("test-cpa") ||
+        pathname.endsWith("test-gpt-load"),
       sent: false,
     });
   }

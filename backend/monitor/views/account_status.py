@@ -14,6 +14,7 @@ from ..api_auth import APIKeyAuthentication
 from ..cpa.quota_status import quota_detail
 from ..cpa.usage import cpa_events_cost
 from ..integrations.cpa import CPAClient, CPAError
+from ..integrations.gpt_load import GPTLoadClient, GPTLoadError
 from ..integrations.sub2api import Sub2APIClient, Sub2APIError, WeeklyWindow
 from ..models import (
     AppSettings,
@@ -256,6 +257,134 @@ def _cpa_status_rows(
     return None
 
 
+def _gpt_load_status_rows(
+    config: AppSettings,
+    accounts: list[MonitoredAccount],
+    rows_by_id: dict[int, dict[str, Any]],
+    sampled_at: datetime,
+) -> str | None:
+    if not accounts:
+        return None
+    if not config.gpt_load_auth_key_encrypted:
+        for account in accounts:
+            rows_by_id[account.id]["warnings"].append(
+                "GPT-Load：尚未配置 AUTH_KEY"
+            )
+        return "尚未配置 GPT-Load AUTH_KEY"
+    try:
+        client = GPTLoadClient(config)
+    except GPTLoadError as exc:
+        return str(exc)
+    with client:
+        try:
+            sources = {
+                (item["group_id"], item["credential_id"]): item
+                for item in client.list_source_accounts()
+            }
+        except GPTLoadError as exc:
+            return str(exc)
+        for account in accounts:
+            row = rows_by_id[account.id]
+            upstream = sources.get(
+                (account.gpt_load_group_id, account.gpt_load_credential_id)
+            )
+            if upstream is None:
+                row["warnings"].append("运行状态：GPT-Load 中未找到该订阅账号")
+            else:
+                effective = upstream["effective_status"] or "unknown"
+                row["runtime"] = {
+                    "name": upstream["email"] or upstream["mask"],
+                    "account_type": upstream["plan_type"] or "Subscription",
+                    "status": effective,
+                    "schedulable": effective == "available",
+                    "current_concurrency": None,
+                    "concurrency_limit": None,
+                    "last_used_at": None,
+                    "rate_limited_at": None,
+                    "rate_limit_reset_at": None,
+                    "overload_until": None,
+                    "temp_unschedulable_until": None,
+                    "temp_unschedulable_reason": None,
+                    "error_message": None,
+                }
+            try:
+                window = client.query_weekly_window(
+                    account.gpt_load_group_id,
+                    account.gpt_load_credential_id,
+                )
+                reset_at = datetime.fromtimestamp(window.reset_at, tz=UTC)
+                cycle_start = reset_at - timedelta(seconds=window.window_seconds)
+                events = CPAUsageEvent.objects.filter(
+                    account=account,
+                    occurred_at__gte=cycle_start,
+                    occurred_at__lte=sampled_at,
+                )
+                totals = _cpa_event_totals(config, events)
+                row["usage"] = {
+                    "source": "gpt_load",
+                    "updated_at": window.sampled_at,
+                    "five_hour": None,
+                    "seven_day": {
+                        "used_percent": float(window.used_percent),
+                        "reset_at": reset_at.isoformat(),
+                        "remaining_seconds": window.reset_after_seconds,
+                        "request_count": totals["request_count"],
+                        "token_count": totals["token_count"],
+                        "account_cost_usd": totals["account_cost_usd"],
+                        "standard_cost_usd": None,
+                        "user_cost_usd": None,
+                    },
+                    "needs_verify": None,
+                    "is_banned": None,
+                    "needs_reauth": None,
+                    "error_code": None,
+                    "error": None,
+                }
+            except GPTLoadError as exc:
+                row["warnings"].append(f"额度状态：{exc}")
+
+            started_at = sampled_at - timedelta(days=STATS_DAYS)
+            events = CPAUsageEvent.objects.filter(
+                account=account,
+                occurred_at__gte=started_at,
+                occurred_at__lte=sampled_at,
+            )
+            totals = _cpa_event_totals(config, events)
+            actual_days = events.dates("occurred_at", "day").count()
+            today = _cpa_event_totals(
+                config,
+                events.filter(occurred_at__date=sampled_at.date()),
+            )
+            divisor = max(1, actual_days)
+            row["stats"] = {
+                "days": STATS_DAYS,
+                "actual_days_used": actual_days,
+                "account_cost_usd": totals["account_cost_usd"],
+                "correction_total_usd": None,
+                "long_context_correction_usd": None,
+                "model_correction_usd": None,
+                "account_cost_with_correction_usd": None,
+                "fast_correction_usd": None,
+                "account_cost_with_fast_correction_usd": None,
+                "standard_cost_usd": None,
+                "user_cost_usd": None,
+                "request_count": totals["request_count"],
+                "token_count": totals["token_count"],
+                "avg_daily_cost_usd": totals["account_cost_usd"] / divisor,
+                "avg_daily_request_count": totals["request_count"] / divisor,
+                "avg_daily_token_count": totals["token_count"] / divisor,
+                "avg_duration_ms": totals["avg_duration_ms"],
+                "today": {
+                    "date": sampled_at.date().isoformat(),
+                    "account_cost_usd": today["account_cost_usd"],
+                    "user_cost_usd": None,
+                    "request_count": today["request_count"],
+                    "token_count": today["token_count"],
+                },
+            }
+    return None
+
+
 class AccountStatusView(PageAccessAPIView):
     """Fetch each upstream account visible to the current principal."""
 
@@ -283,6 +412,9 @@ class AccountStatusView(PageAccessAPIView):
         cpa_accounts = [
             account for account in accounts if account.provider == "cpa"
         ]
+        gpt_load_accounts = [
+            account for account in accounts if account.provider == "gpt_load"
+        ]
         correction_totals = _correction_totals(
             [account.fact_key for account in sub2api_accounts],
             config=config,
@@ -296,6 +428,10 @@ class AccountStatusView(PageAccessAPIView):
                 and (
                     (sub2api_accounts and config.sub2api_admin_token_encrypted)
                     or (cpa_accounts and config.cpa_management_key_encrypted)
+                    or (
+                        gpt_load_accounts
+                        and config.gpt_load_auth_key_encrypted
+                    )
                 )
             ),
             "sampled_at": sampled_at.isoformat(),
@@ -411,6 +547,14 @@ class AccountStatusView(PageAccessAPIView):
             ]
         if cpa_error:
             errors.append(cpa_error)
+        gpt_load_error = _gpt_load_status_rows(
+            config,
+            gpt_load_accounts,
+            rows_by_id,
+            sampled_at,
+        )
+        if gpt_load_error:
+            errors.append(gpt_load_error)
         data["connection_error"] = "；".join(dict.fromkeys(errors)) or None
         return ok(data)
 

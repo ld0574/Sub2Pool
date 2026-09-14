@@ -12,7 +12,13 @@ const toIso = useZonedDateTimeIso();
 const auth = useAuthStore();
 const exactEnd = ref("");
 const initialEnd = ref("");
-const props = defineProps<{ participants: Participant[] }>();
+const props = defineProps<{
+  participants: Participant[];
+  provider: "cpa" | "gpt_load";
+}>();
+const channelLabel = computed(() =>
+  props.provider === "gpt_load" ? "GPT-Load" : "CPA",
+);
 const data = ref<CPAKeys>({ keys: [], unregistered: [] });
 const participantId = ref<number | null>(null);
 const observedHash = ref("");
@@ -46,23 +52,31 @@ function failure(reason: unknown) {
   message.value = reason instanceof ApiError ? reason.message : "操作失败";
 }
 async function load() {
-  data.value = await api<CPAKeys>("cpa/keys");
+  data.value = await api<CPAKeys>(`cpa/keys?provider=${props.provider}`);
 }
 async function bind() {
-  if (!participantId.value || busy.value) return;
+  if (
+    !participantId.value ||
+    busy.value ||
+    (props.provider === "gpt_load" && !observedHash.value)
+  )
+    return;
   busy.value = true;
   message.value = "";
   try {
-    const result = await api<CPABinding>("cpa/keys", {
-      method: "POST",
-      body: jsonBody({
-        participant_id: participantId.value,
-        name: name.value,
-        ...(observedHash.value
-          ? { observed_hash: observedHash.value }
-          : { raw_key: rawKey.value }),
-      }),
-    });
+    const result = await api<CPABinding>(
+      `cpa/keys?provider=${props.provider}`,
+      {
+        method: "POST",
+        body: jsonBody({
+          participant_id: participantId.value,
+          name: name.value,
+          ...(observedHash.value
+            ? { observed_hash: observedHash.value }
+            : { raw_key: rawKey.value }),
+        }),
+      },
+    );
     rawKey.value = "";
     observedHash.value = "";
     name.value = "";
@@ -185,9 +199,12 @@ onMounted(() => {
     data-testid="cpa-key-manager"
   >
     <div class="card-body gap-4">
-      <h2 class="card-title">CPA Key 与成员绑定</h2>
+      <h2 class="card-title">{{ channelLabel }} Key 与成员绑定</h2>
       <p class="text-sm opacity-60">
         一个成员可绑定多个 Key。仅保存不可逆摘要和末四位；成员使用系统账号登录。
+        <template v-if="provider === 'gpt_load'">
+          Access Key 由 GPT-Load 管理 API 同步，无需输入明文。
+        </template>
       </p>
       <form
         class="grid gap-3 md:grid-cols-2 xl:grid-cols-4"
@@ -217,7 +234,13 @@ onMounted(() => {
             class="select w-full"
             @change="rawKey = ''"
           >
-            <option value="">输入完整 Key 预先绑定</option>
+            <option value="">
+              {{
+                provider === "gpt_load"
+                  ? "请选择 GPT-Load Access Key"
+                  : "输入完整 Key 预先绑定"
+              }}
+            </option>
             <option
               v-for="key in available"
               :key="key.observed_hash"
@@ -228,7 +251,9 @@ onMounted(() => {
             </option>
           </select></label
         >
-        <label v-if="!observedHash" class="grid gap-1 text-sm"
+        <label
+          v-if="provider === 'cpa' && !observedHash"
+          class="grid gap-1 text-sm"
           >CPA Key<input
             v-model="rawKey"
             type="password"
@@ -244,7 +269,10 @@ onMounted(() => {
             maxlength="80"
             placeholder="如：个人电脑"
         /></label>
-        <button class="btn justify-self-start" :disabled="busy">
+        <button
+          class="btn justify-self-start"
+          :disabled="busy || (provider === 'gpt_load' && !observedHash)"
+        >
           绑定 Key
         </button>
       </form>
@@ -304,7 +332,7 @@ onMounted(() => {
             </tr>
             <tr v-if="!bindings.length">
               <td colspan="5">
-                暂无绑定。先添加参与者，再选择或输入 CPA Key。
+                暂无绑定。先添加参与者，再选择可用的 {{ channelLabel }} Key。
               </td>
             </tr>
           </tbody>
@@ -314,7 +342,7 @@ onMounted(() => {
   </section>
   <dialog id="cpa-claim-dialog" ref="dialog" class="modal">
     <div class="modal-box max-w-3xl">
-      <h2 class="text-lg font-semibold">认领已有 CPA 请求</h2>
+      <h2 class="text-lg font-semibold">认领已有 {{ channelLabel }} 请求</h2>
       <p class="mt-2 text-sm opacity-60">
         选择未归属的历史时间范围（{{
           auth.timezone

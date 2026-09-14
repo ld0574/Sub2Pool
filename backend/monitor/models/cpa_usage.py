@@ -11,6 +11,16 @@ class CPAUsageEvent(models.Model):
     )
     event_fingerprint = models.CharField(max_length=64, unique=True)
     request_id = models.CharField(max_length=255, blank=True)
+    source = models.CharField(
+        max_length=16,
+        choices=(("cpa", "CPA"), ("gpt_load", "GPT-Load")),
+        default="cpa",
+        db_index=True,
+    )
+    source_cost_nano_usd = models.PositiveBigIntegerField(null=True, blank=True)
+    usage_state = models.CharField(max_length=32, blank=True)
+    cost_state = models.CharField(max_length=32, blank=True)
+    pricing_completeness = models.CharField(max_length=32, blank=True)
     occurred_at = models.DateTimeField(db_index=True)
     model = models.CharField(max_length=255)
     alias = models.CharField(max_length=255, blank=True)

@@ -36,6 +36,12 @@ const selection = ref<CPARequest | null>(null);
 const details = ref<HTMLDialogElement | null>(null);
 const pricing = ref<InstanceType<typeof CPAModelPricingDialog> | null>(null);
 const summary = computed(() => data.value?.summary);
+const selectedAccount = computed(() =>
+  accounts.value.find((account) => account.id === accountId.value),
+);
+const providerLabel = computed(() =>
+  selectedAccount.value?.provider === "gpt_load" ? "GPT-Load" : "CPA",
+);
 const pageCount = computed(() =>
   Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)),
 );
@@ -96,11 +102,16 @@ const metrics = computed(() => {
       tone: "text-warning",
     },
     {
-      label: "估算费用",
+      label:
+        selectedAccount.value?.provider === "gpt_load"
+          ? "日志费用"
+          : "估算费用",
       value: s ? money(s.usage_usd) : "—",
       note: s?.unpriced_request_count
         ? `${s.unpriced_request_count} 次缺价，尚未计入`
-        : "按已配置模型价格估算",
+        : selectedAccount.value?.provider === "gpt_load"
+          ? "使用 GPT-Load 日志冻结计价"
+          : "按已配置模型价格估算",
       icon: "banknotes",
       tone: "text-accent",
     },
@@ -233,7 +244,10 @@ onMounted(async () => {
   try {
     accounts.value = (
       await api<MonitoredAccount[]>("settings/monitored-accounts")
-    ).filter((a) => a.provider === "cpa");
+    ).filter(
+      (account) =>
+        account.provider === "cpa" || account.provider === "gpt_load",
+    );
     accountId.value =
       accounts.value.find((a) => a.id === Number(route.query.account_id))?.id ??
       accounts.value[0]?.id ??
@@ -251,11 +265,15 @@ onMounted(async () => {
   <PageShellHeader>
     <div class="grow">
       <div class="mb-2 flex items-center gap-2">
-        <span class="badge badge-outline badge-sm">CPA</span
+        <span class="badge badge-outline badge-sm">{{ providerLabel }}</span
         ><span class="text-sm text-base-content/60">请求与用量</span>
       </div>
       <h1 class="text-2xl font-semibold tracking-tight">
-        {{ auth.isStaff ? "CPA 请求明细" : "我的 CPA 请求" }}
+        {{
+          auth.isStaff
+            ? `${providerLabel} 请求明细`
+            : `我的 ${providerLabel} 请求`
+        }}
       </h1>
       <p class="mt-2 text-sm text-base-content/60">
         每一次调用的模型、用量与响应表现。{{
@@ -269,7 +287,7 @@ onMounted(async () => {
       <select
         v-if="accounts.length"
         v-model="accountId"
-        aria-label="选择 CPA 账号"
+        :aria-label="`选择 ${providerLabel} 账号`"
         class="select w-full sm:w-56"
         :disabled="loading"
       >
@@ -288,7 +306,7 @@ onMounted(async () => {
         >成员额度</RouterLink
       >
       <button
-        v-if="auth.isStaff && accountId"
+        v-if="auth.isStaff && accountId && selectedAccount?.provider === 'cpa'"
         class="btn"
         @click="pricing?.open()"
       >
@@ -312,12 +330,12 @@ onMounted(async () => {
   >
     <div class="card-body items-center py-16 text-center">
       <AppIcon name="inbox" class="size-10 text-base-content/40" />
-      <h2 class="card-title">暂无可查看的 CPA 账号</h2>
+      <h2 class="card-title">暂无可查看的订阅渠道账号</h2>
       <p>
         {{
           auth.isStaff
-            ? "请先在系统设置中添加 CPA 监控账号。"
-            : "请联系管理员授权 CPA 账号并配置参与者和额度池。"
+            ? "请先在系统设置中添加 CPA 或 GPT-Load 监控账号。"
+            : "请联系管理员授权订阅渠道账号并配置参与者和额度池。"
         }}
       </p>
       <RouterLink v-if="auth.isStaff" to="/settings" class="btn"
@@ -713,7 +731,7 @@ onMounted(async () => {
     </section>
   </template>
   <CPAModelPricingDialog
-    v-if="auth.isStaff && accountId"
+    v-if="auth.isStaff && accountId && selectedAccount?.provider === 'cpa'"
     ref="pricing"
     :account-id="accountId"
     @saved="load"
@@ -784,7 +802,11 @@ onMounted(async () => {
           </div>
         </dl>
         <p class="mt-5 text-xs leading-5 text-base-content/60">
-          费用按当前模型价格估算；输出速度按输出 Token ÷（总耗时 − 首 Token
+          {{
+            selectedAccount?.provider === "gpt_load"
+              ? "费用使用 GPT-Load 日志中的冻结计价结果。"
+              : "费用按当前模型价格估算。"
+          }}输出速度按输出 Token ÷（总耗时 − 首 Token
           延迟）估算，缺少有效耗时时不展示。不采集或展示对话正文。
         </p></template
       >

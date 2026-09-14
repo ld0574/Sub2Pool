@@ -8,6 +8,7 @@ import type { ConfirmDialogHandle, ConfirmDialogOptions } from "@/types/common";
 import AllocationModelCard from "./components/AllocationModelCard.vue";
 import DatabaseTransferCard from "./components/DatabaseTransferCard.vue";
 import CPAConnectionCard from "./components/CPAConnectionCard.vue";
+import GPTLoadConnectionCard from "./components/GPTLoadConnectionCard.vue";
 import DataMaintenanceCard from "./components/DataMaintenanceCard.vue";
 import EmailServiceCard from "./components/EmailServiceCard.vue";
 import ResearchCard from "./components/ResearchCard.vue";
@@ -37,16 +38,19 @@ const {
   success,
   adminToken,
   cpaManagementKey,
+  gptLoadAuthKey,
   smtpPassword,
   resendApiKey,
   openAIAccounts,
   cpaAccounts,
+  gptLoadAccounts,
   monitoredAccounts,
   selectedTestAccountId,
   maintenanceAccountId,
   savingAccountId,
   loadingAccounts,
   loadingCPAAccounts,
+  loadingGPTLoadAccounts,
   exportingDatabase,
   importingDatabase,
   historyRebuildPlan,
@@ -57,9 +61,12 @@ const {
   passwordForm,
   loadOpenAIAccounts,
   loadCPAAccounts,
+  loadGPTLoadAccounts,
   saveMonitoredAccount,
+  cutoverToGPTLoad,
   saveConnection,
   saveCPASettings,
+  saveGPTLoadSettings,
   saveCPAPricing,
   saveAllocation,
   saveSampling,
@@ -101,6 +108,9 @@ const sub2apiMonitoredAccounts = computed(() =>
 );
 const cpaMonitoredAccounts = computed(() =>
   monitoredAccounts.value.filter((account) => account.provider === "cpa"),
+);
+const gptLoadMonitoredAccounts = computed(() =>
+  monitoredAccounts.value.filter((account) => account.provider === "gpt_load"),
 );
 
 async function handleGenerateReadOnlyAPIKey() {
@@ -194,6 +204,22 @@ async function handleRevokeReadOnlyAPIKey() {
       @save="saveCPASettings"
       :save-pricing="saveCPAPricing"
       @save-account="saveMonitoredAccount"
+    />
+    <GPTLoadConnectionCard
+      v-model:settings="settings"
+      v-model:auth-key="gptLoadAuthKey"
+      :accounts="gptLoadAccounts"
+      :monitored-accounts="gptLoadMonitoredAccounts"
+      :legacy-cpa-accounts="cpaMonitoredAccounts"
+      :saving-account-id="savingAccountId"
+      :loading-accounts="loadingGPTLoadAccounts"
+      :testing="testing === 'gpt-load'"
+      :saving="saving === 'gpt-load'"
+      @load-accounts="loadGPTLoadAccounts()"
+      @test="test('gpt-load')"
+      @save="saveGPTLoadSettings"
+      @save-account="saveMonitoredAccount"
+      @cutover="cutoverToGPTLoad"
     />
     <AllocationModelCard
       v-model:settings="settings"

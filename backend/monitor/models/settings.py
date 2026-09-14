@@ -28,11 +28,12 @@ from ..cpa.pricing import (
 
 
 class MonitoredAccount(models.Model):
-    """One quota-bearing OpenAI account exposed by Sub2API or CPA."""
+    """One quota-bearing OpenAI account exposed by a supported gateway."""
 
     PROVIDER_CHOICES = (
         ("sub2api", "Sub2API"),
         ("cpa", "CPA"),
+        ("gpt_load", "GPT-Load"),
     )
     QUERY_MODE_CHOICES = (
         ("passive", "仅读取 Sub2API 被动快照"),
@@ -65,6 +66,14 @@ class MonitoredAccount(models.Model):
         null=True,
         blank=True,
     )
+    gpt_load_group_id = models.PositiveBigIntegerField(null=True, blank=True)
+    gpt_load_credential_id = models.PositiveBigIntegerField(
+        unique=True,
+        null=True,
+        blank=True,
+    )
+    gpt_load_cutover_at = models.DateTimeField(null=True, blank=True)
+    gpt_load_logs_synced_through = models.DateTimeField(null=True, blank=True)
     name = models.CharField(max_length=160)
     enabled = models.BooleanField(default=True)
     quota_query_mode = models.CharField(
@@ -133,11 +142,24 @@ class MonitoredAccount(models.Model):
                         provider="sub2api",
                         external_account_id__isnull=False,
                         cpa_auth_index__isnull=True,
+                        gpt_load_group_id__isnull=True,
+                        gpt_load_credential_id__isnull=True,
+                        gpt_load_cutover_at__isnull=True,
                     )
                     | models.Q(
                         provider="cpa",
                         external_account_id__isnull=True,
                         cpa_auth_index__isnull=False,
+                        gpt_load_group_id__isnull=True,
+                        gpt_load_credential_id__isnull=True,
+                        gpt_load_cutover_at__isnull=True,
+                    )
+                    | models.Q(
+                        provider="gpt_load",
+                        external_account_id__isnull=True,
+                        gpt_load_group_id__isnull=False,
+                        gpt_load_credential_id__isnull=False,
+                        gpt_load_cutover_at__isnull=False,
                     )
                 ),
                 name="account_provider_identity_valid",
@@ -149,7 +171,18 @@ class MonitoredAccount(models.Model):
     def save(self, *args, **kwargs):
         if self.provider == "sub2api":
             self.cpa_auth_index = None
+            self.gpt_load_group_id = None
+            self.gpt_load_credential_id = None
+            self.gpt_load_cutover_at = None
+            self.gpt_load_logs_synced_through = None
         elif self.provider == "cpa":
+            self.external_account_id = None
+            self.gpt_load_group_id = None
+            self.gpt_load_credential_id = None
+            self.gpt_load_cutover_at = None
+            self.gpt_load_logs_synced_through = None
+            self.quota_query_mode = "direct"
+        elif self.provider == "gpt_load":
             self.external_account_id = None
             self.quota_query_mode = "direct"
         if self.pool_id is not None:
@@ -163,7 +196,10 @@ class MonitoredAccount(models.Model):
     @classmethod
     def for_fact_key(cls, account_id: int) -> "MonitoredAccount | None":
         if account_id < 0:
-            return cls.objects.filter(pk=-account_id, provider="cpa").first()
+            return cls.objects.filter(
+                pk=-account_id,
+                provider__in=("cpa", "gpt_load"),
+            ).first()
         return cls.objects.filter(
             external_account_id=account_id,
             provider="sub2api",
@@ -176,13 +212,15 @@ class MonitoredAccount(models.Model):
                 raise ValueError("Sub2API 账号缺少上游账号 ID")
             return self.external_account_id
         if self.pk is None:
-            raise ValueError("CPA 账号必须先保存后才能生成事实键")
+            raise ValueError("订阅账号必须先保存后才能生成事实键")
         return -self.pk
 
     @property
     def source_account_id(self) -> str:
         if self.provider == "cpa":
             return self.cpa_auth_index or ""
+        if self.provider == "gpt_load":
+            return f"{self.gpt_load_group_id}:{self.gpt_load_credential_id}"
         return str(self.external_account_id or "")
 
     @property
@@ -226,6 +264,12 @@ class AppSettings(models.Model):
         validators=[validate_service_url],
     )
     cpa_management_key_encrypted = models.TextField(blank=True)
+    gpt_load_base_url = models.CharField(
+        max_length=500,
+        default="http://host.docker.internal:3001",
+        validators=[validate_service_url],
+    )
+    gpt_load_auth_key_encrypted = models.TextField(blank=True)
     cpa_fast_multiplier = models.DecimalField(
         max_digits=8,
         decimal_places=4,

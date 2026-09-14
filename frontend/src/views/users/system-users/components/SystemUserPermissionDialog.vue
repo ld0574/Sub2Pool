@@ -339,16 +339,16 @@ defineExpose({ open, close, showApiError });
                 <span class="flex items-center gap-2 text-sm font-medium">
                   <span class="truncate">{{ account.name }}</span>
                   <span
-                    v-if="account.provider === 'cpa'"
+                    v-if="account.provider !== 'sub2api'"
                     class="badge badge-xs badge-info"
                   >
-                    CPA
+                    {{ account.provider === "gpt_load" ? "GPT-Load" : "CPA" }}
                   </span>
                 </span>
                 <span class="block truncate text-xs opacity-60">
                   {{
-                    account.provider === "cpa"
-                      ? `CPA ${account.source_account_id}`
+                    account.provider !== "sub2api"
+                      ? `${account.provider === "gpt_load" ? "GPT-Load" : "CPA"} ${account.source_account_id}`
                       : `Sub2API #${account.external_account_id}`
                   }}
                 </span>

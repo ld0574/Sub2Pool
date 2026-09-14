@@ -11,6 +11,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import type {
   CPAAccountOption,
+  GPTLoadAccountOption,
   MonitoredAccount,
   OpenAIAccountOption,
 } from "@/types/accounts";
@@ -44,16 +45,19 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
   const success = ref("");
   const adminToken = ref("");
   const cpaManagementKey = ref("");
+  const gptLoadAuthKey = ref("");
   const smtpPassword = ref("");
   const resendApiKey = ref("");
   const openAIAccounts = ref<OpenAIAccountOption[]>([]);
   const cpaAccounts = ref<CPAAccountOption[]>([]);
+  const gptLoadAccounts = ref<GPTLoadAccountOption[]>([]);
   const monitoredAccounts = ref<MonitoredAccount[]>([]);
   const selectedTestAccountId = ref<number | null>(null);
   const maintenanceAccountId = ref<number | null>(null);
   const savingAccountId = ref<number | "new" | null>(null);
   const loadingAccounts = ref(false);
   const loadingCPAAccounts = ref(false);
+  const loadingGPTLoadAccounts = ref(false);
   const exportingDatabase = ref(false);
   const importingDatabase = ref(false);
   const historyRebuildPlan = ref<HistoricalRebuildPlan | null>(null);
@@ -91,6 +95,43 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
       request_timeout_seconds: settings.value.request_timeout_seconds,
       verify_tls: settings.value.verify_tls,
     };
+  }
+
+  function gptLoadConnectionPayload() {
+    if (!settings.value) return {};
+    return {
+      gpt_load_base_url: settings.value.gpt_load_base_url,
+      gpt_load_auth_key: gptLoadAuthKey.value,
+      request_timeout_seconds: settings.value.request_timeout_seconds,
+      verify_tls: settings.value.verify_tls,
+    };
+  }
+
+  async function loadGPTLoadAccounts(announce = true) {
+    if (!settings.value) return;
+    loadingGPTLoadAccounts.value = true;
+    if (announce) {
+      message.value = "";
+      success.value = "";
+    }
+    try {
+      gptLoadAccounts.value = await api<GPTLoadAccountOption[]>(
+        "settings/gpt-load-accounts",
+        {
+          method: "POST",
+          body: jsonBody(gptLoadConnectionPayload()),
+        },
+      );
+      if (announce)
+        success.value = `已读取 ${gptLoadAccounts.value.length} 个 GPT-Load 订阅账号`;
+    } catch (error) {
+      message.value =
+        error instanceof ApiError
+          ? error.message
+          : "读取 GPT-Load 订阅账号失败";
+    } finally {
+      loadingGPTLoadAccounts.value = false;
+    }
   }
 
   async function loadCPAAccounts(announce = true) {
@@ -180,6 +221,9 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
         if (settings.value.cpa_management_key_configured) {
           await loadCPAAccounts(false);
         }
+        if (settings.value.gpt_load_auth_key_configured) {
+          await loadGPTLoadAccounts(false);
+        }
       } else {
         personalApiKey.value = await api<APIKeyState>("settings/my-api-key");
       }
@@ -236,6 +280,8 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
         updated.sub2api_token_configured;
       settings.value.cpa_management_key_configured =
         updated.cpa_management_key_configured;
+      settings.value.gpt_load_auth_key_configured =
+        updated.gpt_load_auth_key_configured;
       settings.value.smtp_password_configured =
         updated.smtp_password_configured;
       settings.value.resend_api_key_configured =
@@ -244,6 +290,7 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
       if (fields.includes("timezone")) auth.setTimezone(updated.timezone);
       if (section === "connection") adminToken.value = "";
       if (section === "cpa") cpaManagementKey.value = "";
+      if (section === "gpt-load") gptLoadAuthKey.value = "";
       if (section === "email") {
         smtpPassword.value = "";
         resendApiKey.value = "";
@@ -283,6 +330,12 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
       { cpa_management_key: cpaManagementKey.value },
     );
   }
+
+  function saveGPTLoadSettings() {
+    return saveSection("gpt-load", "GPT-Load 连接设置", ["gpt_load_base_url"], {
+      gpt_load_auth_key: gptLoadAuthKey.value,
+    });
+  }
   async function saveCPAPricing(
     pricing: CPAModelPricing,
   ): Promise<string | null> {
@@ -315,6 +368,8 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
       | "id"
       | "provider"
       | "cpa_auth_index"
+      | "gpt_load_group_id"
+      | "gpt_load_credential_id"
       | "external_account_id"
       | "name"
       | "enabled"
@@ -339,6 +394,8 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
             provider: account.provider,
             external_account_id: account.external_account_id,
             cpa_auth_index: account.cpa_auth_index,
+            gpt_load_group_id: account.gpt_load_group_id,
+            gpt_load_credential_id: account.gpt_load_credential_id,
             name: account.name,
             enabled: account.enabled,
             quota_query_mode: account.quota_query_mode,
@@ -354,6 +411,46 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
     } catch (error) {
       message.value =
         error instanceof ApiError ? error.message : "保存监控账号失败";
+    } finally {
+      savingAccountId.value = null;
+    }
+  }
+
+  async function cutoverToGPTLoad(
+    accountId: number,
+    source: GPTLoadAccountOption,
+  ) {
+    const account = monitoredAccounts.value.find(
+      (item) => item.id === accountId,
+    );
+    if (
+      !(await confirmAction({
+        title: "将 CPA 账号续接到 GPT-Load？",
+        message: `“${account?.name ?? `账号 ${accountId}`}”将停止接收新的 CPA usage 事件，并从当前时刻开始同步 GPT-Load 日志。旧请求、本周期已用额度、额度池和历史合同都会保留。`,
+        confirmLabel: "确认原地续接",
+        tone: "warning",
+      }))
+    ) {
+      return;
+    }
+    savingAccountId.value = accountId;
+    message.value = "";
+    success.value = "";
+    try {
+      await api(`settings/monitored-accounts/${accountId}/gpt-load-cutover`, {
+        method: "POST",
+        body: jsonBody({
+          group_id: source.group_id,
+          credential_id: source.credential_id,
+        }),
+      });
+      await loadMonitoredAccounts();
+      historyRebuildPlan.value = null;
+      success.value =
+        "账号已原地续接到 GPT-Load；本周期旧用量保留，新请求将继续累计。";
+    } catch (error) {
+      message.value =
+        error instanceof ApiError ? error.message : "续接 GPT-Load 失败";
     } finally {
       savingAccountId.value = null;
     }
@@ -673,7 +770,7 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
     }
   }
 
-  async function test(kind: "sub2api" | "cpa" | "email") {
+  async function test(kind: "sub2api" | "cpa" | "gpt-load" | "email") {
     testing.value = kind;
     message.value = "";
     success.value = "";
@@ -685,7 +782,9 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
             ? jsonBody(connectionPayload())
             : kind === "cpa"
               ? jsonBody(cpaConnectionPayload())
-              : undefined,
+              : kind === "gpt-load"
+                ? jsonBody(gptLoadConnectionPayload())
+                : undefined,
       });
       success.value = demoMode
         ? kind === "email"
@@ -695,7 +794,9 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
           ? "Sub2API 连接与额度读取正常"
           : kind === "cpa"
             ? "CPA Management API、RESP 鉴权与 usage 配置正常"
-            : "测试邮件已发送";
+            : kind === "gpt-load"
+              ? "GPT-Load 管理 API 鉴权正常"
+              : "测试邮件已发送";
     } catch (error) {
       message.value = error instanceof ApiError ? error.message : "测试失败";
     } finally {
@@ -753,16 +854,19 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
     success,
     adminToken,
     cpaManagementKey,
+    gptLoadAuthKey,
     smtpPassword,
     resendApiKey,
     openAIAccounts,
     cpaAccounts,
+    gptLoadAccounts,
     monitoredAccounts,
     selectedTestAccountId,
     maintenanceAccountId,
     savingAccountId,
     loadingAccounts,
     loadingCPAAccounts,
+    loadingGPTLoadAccounts,
     exportingDatabase,
     importingDatabase,
     historyRebuildPlan,
@@ -773,11 +877,14 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
     passwordForm,
     loadOpenAIAccounts,
     loadCPAAccounts,
+    loadGPTLoadAccounts,
     loadMonitoredAccounts,
     saveConnection,
     saveCPASettings,
+    saveGPTLoadSettings,
     saveCPAPricing,
     saveMonitoredAccount,
+    cutoverToGPTLoad,
     saveAllocation,
     saveSampling,
     saveEmail,

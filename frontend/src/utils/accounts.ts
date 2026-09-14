@@ -1,5 +1,7 @@
 import type { MonitoredAccount } from "@/types/accounts";
 
 export function monitoredAccountLabel(account: MonitoredAccount): string {
-  return account.provider === "cpa" ? `${account.name} · CPA` : account.name;
+  if (account.provider === "cpa") return `${account.name} · CPA`;
+  if (account.provider === "gpt_load") return `${account.name} · GPT-Load`;
+  return account.name;
 }

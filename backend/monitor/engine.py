@@ -151,6 +151,15 @@ def _run_monitor_locked(
             requested_source,
             guard,
         )
+    if account.provider == "gpt_load":
+        from .gpt_load.monitoring import run_gpt_load_monitor
+
+        return run_gpt_load_monitor(
+            config,
+            account,
+            requested_source,
+            guard,
+        )
     allocations = list(
         PoolParticipant.objects.select_related("participant", "pool")
         .filter(

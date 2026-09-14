@@ -10,9 +10,19 @@ import { useDateTime } from "@/composables/useDateTime";
 const formatDateTime = useDateTime();
 const formatNumber = (value: number) => value.toLocaleString();
 
-const props = defineProps<{ data: CPAPoolSummary; loading?: boolean }>();
+const props = withDefaults(
+  defineProps<{
+    data: CPAPoolSummary;
+    loading?: boolean;
+    provider?: "cpa" | "gpt_load";
+  }>(),
+  { provider: "cpa" },
+);
 const emit = defineEmits<{ refresh: [] }>();
 const auth = useAuthStore();
+const channelLabel = computed(() =>
+  props.provider === "gpt_load" ? "GPT-Load" : "CPA",
+);
 const members = computed(() =>
   [...props.data.members].sort((a, b) => Number(b.is_self) - Number(a.is_self)),
 );
@@ -25,11 +35,17 @@ const members = computed(() =>
   >
     <div class="card-body gap-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="card-title">{{ data.pool_name }} · CPA 拼车</h2>
+        <h2 class="card-title">
+          {{ data.pool_name }} · {{ channelLabel }} 拼车
+        </h2>
         <span class="badge badge-outline">额度展示 · 尚未启用自动限制</span>
       </div>
       <p class="text-sm opacity-60">
-        按各账号当前周期汇总，美元金额为本地模型价格估算。成员可看同车汇总，逐次请求仅本人和管理员可见。
+        按各账号当前周期汇总。{{
+          provider === "gpt_load"
+            ? "CPA 历史费用保持原计价，续接后的费用采用 GPT-Load 日志冻结计价。"
+            : "美元金额按本地模型价格估算。"
+        }}成员可看同车汇总，逐次请求仅本人和管理员可见。
       </p>
       <p class="text-xs opacity-60">
         请求统计更新于
@@ -83,9 +99,9 @@ const members = computed(() =>
           >
           <RouterLink
             v-if="auth.isStaff"
-            to="/allocation?provider=cpa"
+            :to="{ path: '/allocation', query: { provider } }"
             class="btn btn-sm"
-            >分配 CPA 份额</RouterLink
+            >分配 {{ channelLabel }} 份额</RouterLink
           >
         </div>
       </div>
@@ -111,17 +127,17 @@ const members = computed(() =>
       </div>
       <div v-else class="alert" role="status">
         <span
-          >尚未分配 CPA 拼车成员。请先绑定参与者的 Key，再为 CPA
-          池分配份额。</span
+          >尚未分配 {{ channelLabel }} 拼车成员。请先绑定参与者的 Key，再为
+          {{ channelLabel }} 池分配份额。</span
         ><RouterLink
           v-if="auth.isStaff"
-          to="/participants?provider=cpa"
+          :to="{ path: '/participants', query: { provider } }"
           class="btn btn-sm"
-          >绑定 CPA Key</RouterLink
+          >绑定 {{ channelLabel }} Key</RouterLink
         >
       </div>
       <p v-if="members.length" class="text-xs text-base-content/60">
-        金额均为估算：周预算按当前份额分配，剩余＝预算或预计权益－已采集消耗，漏采和缺价尚未扣除；账期剩余仅供跨周协调。
+        周预算按当前份额分配，剩余＝预算或预计权益－已采集消耗，漏采和缺价尚未扣除；账期剩余仅供跨周协调。
         <span
           v-if="
             data.billing_summary?.configured &&
@@ -138,13 +154,13 @@ const members = computed(() =>
           <div>
             <h3 class="font-medium">未归属 / 未分配成员的消耗</h3>
             <p class="mt-2 text-sm">
-              {{ formatCurrency(data.unattributed.usage_usd) }}（估算） ·
+              {{ formatCurrency(data.unattributed.usage_usd) }}（累计） ·
               {{ data.unattributed.request_count.toLocaleString() }} 次请求
             </p>
           </div>
           <RouterLink
             v-if="auth.isStaff"
-            to="/participants?provider=cpa"
+            :to="{ path: '/participants', query: { provider } }"
             class="btn btn-sm"
             >检查 Key 归属</RouterLink
           >
@@ -181,7 +197,9 @@ const members = computed(() =>
               {{
                 account.owner.status === "ambiguous"
                   ? "此池有多位车主，请保留唯一车主身份后启用自动归属。"
-                  : "此池尚无车主，在参与者管理中设为车主并加入该 CPA 池后，未匹配 Key 的新请求将计入车主。"
+                  : "此池尚无车主，在参与者管理中设为车主并加入该 " +
+                    channelLabel +
+                    " 池后，未匹配 Key 的新请求将计入车主。"
               }}
             </p>
             <CPAOwnerClaim
@@ -221,7 +239,11 @@ const members = computed(() =>
                   <th>成员</th>
                   <th>份额</th>
                   <th>请求 / Token</th>
-                  <th>请求估算费用</th>
+                  <th>
+                    {{
+                      provider === "gpt_load" ? "请求日志费用" : "请求估算费用"
+                    }}
+                  </th>
                   <th>权益总额</th>
                   <th>已用权益</th>
                   <th>剩余权益</th>
@@ -283,8 +305,9 @@ const members = computed(() =>
                 </tr>
                 <tr v-if="!data.members.length">
                   <td colspan="7">
-                    尚未分配 CPA 拼车成员，请在参与者管理中绑定 Key，并配置 CPA
-                    额度池。
+                    尚未分配 {{ channelLabel }}
+                    拼车成员，请在参与者管理中绑定 Key，并配置
+                    {{ channelLabel }} 额度池。
                   </td>
                 </tr>
                 <tr v-if="data.unattributed.request_count">

@@ -197,7 +197,11 @@ onMounted(load);
     <AppIcon name="exclamation-triangle" class="size-5" />
     <span>
       尚未完成{{
-        data.selected_provider === "cpa" ? " CPA" : " Sub2API"
+        data.selected_provider === "cpa"
+          ? " CPA"
+          : data.selected_provider === "gpt_load"
+            ? " GPT-Load"
+            : " Sub2API"
       }}连接配置。请先在系统设置中填写连接信息并添加监控账号。
     </span>
   </div>
@@ -222,6 +226,7 @@ onMounted(load);
   <CPAPoolCard
     v-if="data?.cpa_summary"
     :data="data.cpa_summary"
+    :provider="data.selected_provider === 'gpt_load' ? 'gpt_load' : 'cpa'"
     :loading="loading"
     @refresh="load"
   />

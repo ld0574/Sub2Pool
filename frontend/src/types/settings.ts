@@ -44,6 +44,8 @@ export interface AppSettingsData {
   sub2api_base_url: string;
   cpa_base_url: string;
   cpa_management_key_configured: boolean;
+  gpt_load_base_url: string;
+  gpt_load_auth_key_configured: boolean;
   cpa_fast_multiplier: number;
   cpa_double_billing_enabled: boolean;
   cpa_double_billing_threshold_tokens: number;

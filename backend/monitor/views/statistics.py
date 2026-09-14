@@ -94,7 +94,7 @@ class StatisticsView(PageAccessAPIView):
                     now,
                     cost_breakdowns,
                 ),
-                "cpa_summary": pool_summary(request.user, account, config) if account.provider == "cpa" else None,
+                "cpa_summary": pool_summary(request.user, account, config) if account.provider in {"cpa", "gpt_load"} else None,
                 "usage_days": usage_days,
                 "usage_precision": usage_precision,
                 "sample_interval_minutes": config.local_poll_minutes,
@@ -120,7 +120,7 @@ class StatisticsView(PageAccessAPIView):
                         usage_days=usage_days,
                         usage_precision=usage_precision,
                     )
-                    if account.provider == "cpa"
+                    if account.provider in {"cpa", "gpt_load"}
                     else []
                 ),
             }
@@ -162,7 +162,7 @@ class ParticipantAPIUsageView(PageAccessAPIView):
         if account is None:
             return error("尚未配置启用的监控账号", status.HTTP_409_CONFLICT)
         if account.provider != "sub2api":
-            return error("CPA 账号不使用参与者 API 用量接口", 400)
+            return error("订阅渠道账号不使用参与者 API 用量接口", 400)
 
         observation = latest_cycle_observation(account)
         if observation is None or observation.attribution_started_at is None:

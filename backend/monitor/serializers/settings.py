@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from ..billing_correction.rules import (
@@ -11,7 +12,13 @@ from ..billing_correction.rules import (
 )
 from ..fast_correction.rules import normalize_fast_correction_rules
 from ..fast_correction.status import missing_current_cycle_intervals
-from ..models import AppSettings, MonitoredAccount, QuotaPool, validate_service_url
+from ..models import (
+    AppSettings,
+    CPAAccountCollectionInterval,
+    MonitoredAccount,
+    QuotaPool,
+    validate_service_url,
+)
 from ..secrets import encrypt_secret
 from ..cpa.pricing import validate_cpa_model_pricing
 
@@ -64,11 +71,28 @@ class CPAConnectionSerializer(serializers.Serializer):
     verify_tls = serializers.BooleanField(required=False)
 
 
+class GPTLoadConnectionSerializer(serializers.Serializer):
+    gpt_load_base_url = serializers.CharField(
+        required=False,
+        max_length=500,
+        validators=[validate_service_url],
+    )
+    gpt_load_auth_key = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+        write_only=True,
+    )
+    request_timeout_seconds = serializers.IntegerField(required=False, min_value=1)
+    verify_tls = serializers.BooleanField(required=False)
+
+
 
 SETTINGS_FIELDS = (
     "monitoring_enabled",
     "sub2api_base_url",
     "cpa_base_url",
+    "gpt_load_base_url",
     "cpa_fast_multiplier",
     "cpa_double_billing_enabled",
     "cpa_double_billing_threshold_tokens",
@@ -125,6 +149,10 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
             "provider",
             "external_account_id",
             "cpa_auth_index",
+            "gpt_load_group_id",
+            "gpt_load_credential_id",
+            "gpt_load_cutover_at",
+            "gpt_load_logs_synced_through",
             "source_account_id",
             "pool_id",
             "name",
@@ -156,6 +184,8 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
             "last_success_at",
             "next_local_check_at",
             "last_error",
+            "gpt_load_cutover_at",
+            "gpt_load_logs_synced_through",
         )
 
     def validate_external_account_id(self, value: int | None) -> int | None:
@@ -170,6 +200,23 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
         if self.instance is not None and normalized != self.instance.cpa_auth_index:
             raise serializers.ValidationError("已有监控账号不能修改 CPA auth_index")
         return normalized
+
+    def validate_gpt_load_group_id(self, value: int | None) -> int | None:
+        if self.instance is not None and value != self.instance.gpt_load_group_id:
+            raise serializers.ValidationError(
+                "已有监控账号不能修改 GPT-Load Group"
+            )
+        return value
+
+    def validate_gpt_load_credential_id(self, value: int | None) -> int | None:
+        if (
+            self.instance is not None
+            and value != self.instance.gpt_load_credential_id
+        ):
+            raise serializers.ValidationError(
+                "已有监控账号不能修改 GPT-Load Credential"
+            )
+        return value
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -189,6 +236,16 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
             "cpa_auth_index",
             self.instance.cpa_auth_index if self.instance is not None else None,
         )
+        gpt_load_group_id = attrs.get(
+            "gpt_load_group_id",
+            self.instance.gpt_load_group_id if self.instance is not None else None,
+        )
+        gpt_load_credential_id = attrs.get(
+            "gpt_load_credential_id",
+            self.instance.gpt_load_credential_id
+            if self.instance is not None
+            else None,
+        )
         if provider == "sub2api" and external_id is None:
             raise serializers.ValidationError(
                 {"external_account_id": "Sub2API 账号必须填写上游账号 ID"}
@@ -197,11 +254,26 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"cpa_auth_index": "CPA 账号必须填写 auth_index"}
             )
+        if provider == "gpt_load" and (
+            gpt_load_group_id is None or gpt_load_credential_id is None
+        ):
+            raise serializers.ValidationError(
+                {"gpt_load_credential_id": "GPT-Load 账号必须选择 Group 和 Credential"}
+            )
         if provider == "cpa":
             attrs["external_account_id"] = None
             attrs["quota_query_mode"] = "direct"
+            attrs["gpt_load_group_id"] = None
+            attrs["gpt_load_credential_id"] = None
+        elif provider == "gpt_load":
+            attrs["external_account_id"] = None
+            if self.instance is None:
+                attrs["cpa_auth_index"] = None
+            attrs["quota_query_mode"] = "direct"
         else:
             attrs["cpa_auth_index"] = None
+            attrs["gpt_load_group_id"] = None
+            attrs["gpt_load_credential_id"] = None
         capacity_min = attrs.get(
             "capacity_min_usd_override",
             (
@@ -244,7 +316,20 @@ class MonitoredAccountSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         pool = QuotaPool.for_new_account(validated_data["name"])
-        return MonitoredAccount.objects.create(pool=pool, **validated_data)
+        if validated_data.get("provider") == "gpt_load":
+            validated_data["gpt_load_cutover_at"] = timezone.now()
+        account = MonitoredAccount.objects.create(pool=pool, **validated_data)
+        if account.provider == "gpt_load":
+            CPAAccountCollectionInterval.objects.create(
+                account=account,
+                session_key=(
+                    f"gpt-load-{account.gpt_load_group_id}-"
+                    f"{account.gpt_load_credential_id}"
+                ),
+                connected_at=account.gpt_load_cutover_at,
+                end_reliable=True,
+            )
+        return account
 
     @transaction.atomic
     def update(self, instance, validated_data):
@@ -270,6 +355,12 @@ class AppSettingsSerializer(serializers.ModelSerializer):
         trim_whitespace=False,
         write_only=True,
     )
+    gpt_load_auth_key = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+        write_only=True,
+    )
     smtp_password = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -290,10 +381,15 @@ class AppSettingsSerializer(serializers.ModelSerializer):
         required=False,
         write_only=True,
     )
+    clear_gpt_load_auth_key = serializers.BooleanField(
+        required=False,
+        write_only=True,
+    )
     clear_smtp_password = serializers.BooleanField(required=False, write_only=True)
     clear_resend_api_key = serializers.BooleanField(required=False, write_only=True)
     sub2api_token_configured = serializers.SerializerMethodField()
     cpa_management_key_configured = serializers.SerializerMethodField()
+    gpt_load_auth_key_configured = serializers.SerializerMethodField()
     smtp_password_configured = serializers.SerializerMethodField()
     resend_api_key_configured = serializers.SerializerMethodField()
     fast_correction_rebuild_recommended = serializers.SerializerMethodField()
@@ -308,14 +404,17 @@ class AppSettingsSerializer(serializers.ModelSerializer):
             *SETTINGS_FIELDS,
             "sub2api_admin_token",
             "cpa_management_key",
+            "gpt_load_auth_key",
             "smtp_password",
             "resend_api_key",
             "clear_sub2api_admin_token",
             "clear_cpa_management_key",
+            "clear_gpt_load_auth_key",
             "clear_smtp_password",
             "clear_resend_api_key",
             "sub2api_token_configured",
             "cpa_management_key_configured",
+            "gpt_load_auth_key_configured",
             "smtp_password_configured",
             "resend_api_key_configured",
             "fast_correction_rebuild_recommended",
@@ -348,6 +447,9 @@ class AppSettingsSerializer(serializers.ModelSerializer):
         return bool(obj.sub2api_admin_token_encrypted)
     def get_cpa_management_key_configured(self, obj) -> bool:
         return bool(obj.cpa_management_key_encrypted)
+
+    def get_gpt_load_auth_key_configured(self, obj) -> bool:
+        return bool(obj.gpt_load_auth_key_encrypted)
 
     def get_cpa_collector_status(self, _obj) -> dict:
         from ..cpa.collector_state import get_collector_status
@@ -438,10 +540,12 @@ class AppSettingsSerializer(serializers.ModelSerializer):
     def update(self, instance: AppSettings, validated_data):
         token = validated_data.pop("sub2api_admin_token", "")
         cpa_management_key = validated_data.pop("cpa_management_key", "")
+        gpt_load_auth_key = validated_data.pop("gpt_load_auth_key", "")
         smtp_password = validated_data.pop("smtp_password", "")
         resend_api_key = validated_data.pop("resend_api_key", "")
         clear_token = validated_data.pop("clear_sub2api_admin_token", False)
         clear_cpa_key = validated_data.pop("clear_cpa_management_key", False)
+        clear_gpt_load_key = validated_data.pop("clear_gpt_load_auth_key", False)
         clear_smtp = validated_data.pop("clear_smtp_password", False)
         clear_resend = validated_data.pop("clear_resend_api_key", False)
 
@@ -455,6 +559,10 @@ class AppSettingsSerializer(serializers.ModelSerializer):
             instance.cpa_management_key_encrypted = encrypt_secret(cpa_management_key)
         if clear_cpa_key:
             instance.cpa_management_key_encrypted = ""
+        if gpt_load_auth_key:
+            instance.gpt_load_auth_key_encrypted = encrypt_secret(gpt_load_auth_key)
+        if clear_gpt_load_key:
+            instance.gpt_load_auth_key_encrypted = ""
         if smtp_password:
             instance.smtp_password_encrypted = encrypt_secret(smtp_password)
         if clear_smtp:

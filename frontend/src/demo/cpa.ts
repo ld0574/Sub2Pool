@@ -206,7 +206,8 @@ export function demoCPASummary(
   accountId: number,
 ): CPAPoolSummary | null {
   const account = state.monitoredAccounts.find(
-    (a) => a.id === accountId && a.provider === "cpa",
+    (a) =>
+      a.id === accountId && (a.provider === "cpa" || a.provider === "gpt_load"),
   );
   const pool = state.quotaPools.find((p) => p.id === account?.pool_id);
   if (!account || !pool || !canRead(state, accountId)) return null;

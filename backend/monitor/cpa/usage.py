@@ -286,6 +286,14 @@ def cpa_event_cost(
 ) -> tuple[Decimal, bool]:
     """Return current estimated cost and whether the model price is unknown."""
 
+    if event.source == "gpt_load":
+        cost = Decimal(event.source_cost_nano_usd or 0) / Decimal("1000000000")
+        incomplete = event.cost_state == "unpriced" or (
+            event.cost_state == "priced"
+            and event.pricing_completeness not in {"complete", "not_applicable"}
+        )
+        return cost, incomplete
+
     tiers = (event.requested_service_tier, event.response_service_tier)
     tier = next(
         (
@@ -406,7 +414,11 @@ def _refresh_cpa_account_history(
             point.interval_actual_cost = None
             point.provenance = {
                 **(point.provenance or {}),
-                "source": "cpa_usage_stream",
+                "source": (
+                    "gpt_load_logs"
+                    if account.provider == "gpt_load"
+                    else "cpa_usage_stream"
+                ),
                 "cost_estimate": True,
             }
             point.save(

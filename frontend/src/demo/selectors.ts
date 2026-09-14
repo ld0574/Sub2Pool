@@ -55,7 +55,7 @@ export function trajectoryData(
   const latestObservation = state.observations.find(
     (item) => item.id === period.observationIds.at(-1),
   );
-  if (account?.provider === "cpa") {
+  if (account?.provider === "cpa" || account?.provider === "gpt_load") {
     return {
       account: {
         id: account.id,
@@ -65,7 +65,7 @@ export function trajectoryData(
         name: account.name,
       },
       available: false,
-      message: "演示 CPA 账号刚建立连接，尚无连接后的粒子轨迹。",
+      message: `演示 ${account.provider === "gpt_load" ? "GPT-Load" : "CPA"} 账号刚建立连接，尚无连接后的粒子轨迹。`,
     };
   }
   return {
@@ -160,7 +160,7 @@ export function dashboardData(
     needs_manual_update_count:
       account?.provider === "sub2api" ? participantRows.length : 0,
     cycle:
-      account?.provider === "cpa"
+      account?.provider === "cpa" || account?.provider === "gpt_load"
         ? null
         : {
             id: latest.id,

@@ -156,12 +156,12 @@ defineExpose<DialogController<[Observation]>>({ open, close });
         </table>
       </div>
       <div
-        v-if="observation?.provider === 'cpa'"
+        v-if="observation?.provider !== 'sub2api'"
         class="mt-4 alert text-sm alert-info"
       >
         <AppIcon name="information-circle" class="size-5" />
         <span
-          >CPA 观测只有账号级本地估算成本，不生成参与者归属或余额建议。</span
+          >订阅渠道观测使用账号级请求成本，并按 Key 绑定生成参与者归属。</span
         >
       </div>
       <div class="modal-action">

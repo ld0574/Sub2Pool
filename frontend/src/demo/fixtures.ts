@@ -220,6 +220,8 @@ function baseSettings(): AppSettingsData {
     sub2api_base_url: "https://demo.example.test",
     cpa_base_url: "https://cpa.demo.example.test",
     cpa_management_key_configured: false,
+    gpt_load_base_url: "https://gpt-load.demo.example.test",
+    gpt_load_auth_key_configured: false,
     cpa_fast_multiplier: 2.5,
     cpa_double_billing_enabled: false,
     cpa_double_billing_threshold_tokens: 272000,

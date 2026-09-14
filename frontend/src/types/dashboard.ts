@@ -41,7 +41,7 @@ export interface DashboardData {
   monitoring_enabled: boolean;
   accounts: MonitoredAccount[];
   selected_account_id: number | null;
-  selected_provider: "sub2api" | "cpa" | null;
+  selected_provider: "sub2api" | "cpa" | "gpt_load" | null;
   last_local_check_at: string | null;
   last_upstream_check_at: string | null;
   snapshot_stale: boolean;

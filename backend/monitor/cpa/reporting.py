@@ -86,7 +86,7 @@ def pool_summary(user, account, config=None):
     mine = visible_participant_ids(user)
     accounts = list(
         visible_accounts_for(user)
-        .filter(provider="cpa", pool_id=account.pool_id, enabled=True)
+        .filter(provider=account.provider, pool_id=account.pool_id, enabled=True)
         .order_by("id")
     )
     allocations = list(
@@ -185,7 +185,7 @@ def pool_summary(user, account, config=None):
             snapshot = snapshots.get(pk)
             member_reasons = list(unavailable_reasons)
             if pk not in shares:
-                member_reasons.append("尚未分配 CPA 份额")
+                member_reasons.append("尚未分配订阅渠道份额")
             if not snapshot or not snapshot.cpa_contract_known:
                 member_reasons.append("缺少历史份额依据或对应额度观测")
             elif (
@@ -258,13 +258,37 @@ def pool_summary(user, account, config=None):
         "pool_name": account.pool.name,
         "selected_account_id": account.id,
         "partial_scope": len(accounts)
-        != account.pool.accounts.filter(enabled=True).count(),
+        != account.pool.accounts.filter(
+            provider=account.provider,
+            enabled=True,
+        ).count(),
         "accounts": by_account,
         "members": list(rows.values()),
         "unattributed": {
             k: float(v) if isinstance(v, Decimal) else v for k, v in unassigned.items()
         },
-        "collector": get_collector_status(include_error=user.is_staff),
+        "collector": (
+            get_collector_status(include_error=user.is_staff)
+            if account.provider == "cpa"
+            else {
+                "state": "polling",
+                "connected": bool(account.last_success_at),
+                "stale": False,
+                "connected_at": None,
+                "heartbeat_at": account.last_success_at.isoformat()
+                if account.last_success_at
+                else None,
+                "last_message_at": account.gpt_load_logs_synced_through.isoformat()
+                if account.gpt_load_logs_synced_through
+                else None,
+                "last_persisted_at": account.gpt_load_logs_synced_through.isoformat()
+                if account.gpt_load_logs_synced_through
+                else None,
+                "pending_count": 0,
+                "last_error": account.last_error if user.is_staff else "",
+                "last_error_at": None,
+            }
+        ),
         "cost_estimate": True,
         "enforcement_enabled": False,
         "generated_at": now.isoformat(),
