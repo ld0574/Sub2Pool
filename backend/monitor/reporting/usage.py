@@ -113,6 +113,8 @@ def cpa_api_key_usage_series(
                 "request_count": 0,
                 "token_count": 0,
                 "unpriced_request_count": 0,
+                "cpa_unpriced_request_count": 0,
+                "gpt_load_unpriced_request_count": 0,
                 "_buckets": {},
             },
         )
@@ -150,6 +152,8 @@ def cpa_api_key_usage_series(
         item["token_count"] += event.total_tokens
         if unknown_model:
             item["unpriced_request_count"] += 1
+            source = "gpt_load" if event.source == "gpt_load" else "cpa"
+            item[f"{source}_unpriced_request_count"] += 1
     result = []
     for item in series.values():
         buckets = item.pop("_buckets")

@@ -457,6 +457,8 @@ def statistics_schemas(nullable_number: dict, nullable_string: dict) -> dict:
                 "request_count",
                 "token_count",
                 "unpriced_request_count",
+                "cpa_unpriced_request_count",
+                "gpt_load_unpriced_request_count",
                 "points",
             ],
             "properties": {
@@ -466,6 +468,8 @@ def statistics_schemas(nullable_number: dict, nullable_string: dict) -> dict:
                 "request_count": {"type": "integer"},
                 "token_count": {"type": "integer"},
                 "unpriced_request_count": {"type": "integer"},
+                "cpa_unpriced_request_count": {"type": "integer"},
+                "gpt_load_unpriced_request_count": {"type": "integer"},
                 "points": {
                     "type": "array",
                     "items": {

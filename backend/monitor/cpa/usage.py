@@ -442,7 +442,12 @@ def refresh_cpa_history(config: AppSettings, *, rebuild: bool = True) -> int:
     from ..replay import rebuild_account
 
     refreshed = 0
-    for account in MonitoredAccount.objects.filter(provider="cpa"):
+    # A cut-over account keeps its legacy CPA events under the same fact key.
+    # Repricing those events therefore has to refresh both active CPA accounts
+    # and accounts that now ingest GPT-Load logs.
+    for account in MonitoredAccount.objects.filter(
+        provider__in=("cpa", "gpt_load")
+    ):
         account_refreshed = _refresh_cpa_account_history(config, account)
         refreshed += account_refreshed
         if account_refreshed and rebuild:

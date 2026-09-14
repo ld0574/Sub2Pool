@@ -104,6 +104,66 @@ def test_sync_respects_account_scope_and_manual_edit_while_fetching(setup, monke
     assert "other-model" not in result["pricing"]
 
 
+def test_cutover_account_sync_only_prices_legacy_cpa_events(setup, monkeypatch):
+    config, _admin, account, alice, _bob, keys, start = setup
+    legacy = event(
+        account,
+        keys[0],
+        start + timedelta(minutes=10),
+        model="new-model",
+    )
+    imported = event(
+        account,
+        keys[0],
+        start + timedelta(minutes=40),
+        model="gpt-load-only-model",
+    )
+    imported.source = "gpt_load"
+    imported.cost_state = "unpriced"
+    imported.pricing_completeness = "missing"
+    imported.source_cost_nano_usd = 0
+    imported.save(
+        update_fields=[
+            "source",
+            "cost_state",
+            "pricing_completeness",
+            "source_cost_nano_usd",
+        ]
+    )
+    last = observation(account, start, start + timedelta(hours=1), 10, 0)
+    account.provider = "gpt_load"
+    account.gpt_load_group_id = 11
+    account.gpt_load_credential_id = 21
+    account.gpt_load_cutover_at = start + timedelta(minutes=30)
+    account.save()
+    rebuild_account(account.fact_key, config)
+
+    monkeypatch.setattr("monitor.cpa.price_sync.fetch_catalog", catalog)
+    client = Client()
+    headers, _ = jwt_login(client)
+    path = f"/api/settings/cpa-pricing?account_id={account.id}"
+    inventory = client.get(path, **headers).json()["data"]
+
+    assert [row["model"] for row in inventory["models"]] == ["new-model"]
+    assert inventory["unpriced_request_count"] == 1
+    response = client.post(path, **headers)
+    assert response.status_code == 200, response.content
+    result = response.json()["data"]
+    assert [row["model"] for row in result["added"]] == ["new-model"]
+    assert not result["missing_model_count"]
+    assert "gpt-load-only-model" not in result["pricing"]
+
+    assert CPAUsageEvent.objects.get(pk=legacy.pk).source == "cpa"
+    assert CPAUsageEvent.objects.get(pk=imported.pk).cost_state == "unpriced"
+    assert (
+        ParticipantSnapshot.objects.get(
+            observation=last,
+            participant=alice,
+        ).raw_selected_cost
+        == 10
+    )
+
+
 def test_pricing_admin_only_and_failures_do_not_change_settings(setup, monkeypatch):
     config, _admin, account, alice, _bob, keys, start = setup
     event(account, keys[0], start, model="new-model")

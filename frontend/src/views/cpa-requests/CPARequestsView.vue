@@ -36,6 +36,12 @@ const selection = ref<CPARequest | null>(null);
 const details = ref<HTMLDialogElement | null>(null);
 const pricing = ref<InstanceType<typeof CPAModelPricingDialog> | null>(null);
 const summary = computed(() => data.value?.summary);
+const cpaUnpricedCount = computed(
+  () => summary.value?.cpa_unpriced_request_count ?? 0,
+);
+const gptLoadUnpricedCount = computed(
+  () => summary.value?.gpt_load_unpriced_request_count ?? 0,
+);
 const selectedAccount = computed(() =>
   accounts.value.find((account) => account.id === accountId.value),
 );
@@ -481,16 +487,20 @@ onMounted(async () => {
       role="status"
     >
       <AppIcon name="exclamation-triangle" class="size-5" /><span
-        >{{
-          summary.unpriced_request_count
-        }}
-        次请求缺少模型价格，费用暂未计入。{{
-          auth.isStaff
-            ? "可一键补齐已收录模型的价格。"
-            : "请联系管理员补齐价格。"
-        }}</span
+        >{{ summary.unpriced_request_count }}
+        次请求尚未计价，费用暂未计入。
+        <template v-if="cpaUnpricedCount">
+          其中 {{ cpaUnpricedCount }} 次 CPA 请求缺少本地模型价格，{{
+            auth.isStaff ? "可同步已收录模型的价格。" : "请联系管理员补齐价格。"
+          }}
+        </template>
+        <template v-if="gptLoadUnpricedCount">
+          其中 {{ gptLoadUnpricedCount }} 次 GPT-Load
+          请求的上游日志未计价，本地价格同步无法补齐，请检查 GPT-Load
+          的模型价格配置。
+        </template></span
       ><button
-        v-if="auth.isStaff"
+        v-if="auth.isStaff && cpaUnpricedCount"
         class="btn btn-sm"
         :disabled="loading"
         @click="pricing?.open(true)"
@@ -740,7 +750,7 @@ onMounted(async () => {
     </section>
   </template>
   <CPAModelPricingDialog
-    v-if="auth.isStaff && accountId && selectedAccount?.provider === 'cpa'"
+    v-if="auth.isStaff && accountId"
     ref="pricing"
     :account-id="accountId"
     @saved="load"

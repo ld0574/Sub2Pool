@@ -91,3 +91,36 @@ def test_summary_readonly_key_is_scoped_and_opt_in(setup):
         ).status_code
         == 400
     )
+
+
+def test_request_summary_splits_unpriced_events_by_source(setup):
+    _config, _admin, account, alice, _bob, keys, start = setup
+    event(account, keys[0], start, model="missing-cpa-price")
+    gpt_load_event = event(
+        account,
+        keys[0],
+        start + timedelta(minutes=1),
+        model="missing-gpt-load-price",
+    )
+    gpt_load_event.source = "gpt_load"
+    gpt_load_event.cost_state = "unpriced"
+    gpt_load_event.pricing_completeness = "missing"
+    gpt_load_event.source_cost_nano_usd = 0
+    gpt_load_event.save(
+        update_fields=[
+            "source",
+            "cost_state",
+            "pricing_completeness",
+            "source_cost_nano_usd",
+        ]
+    )
+
+    _user, client, headers = member_client(account, alice)
+    summary = client.get(
+        f"/api/cpa/requests?account_id={account.id}&include_summary=true",
+        **headers,
+    ).json()["data"]["summary"]
+
+    assert summary["unpriced_request_count"] == 2
+    assert summary["cpa_unpriced_request_count"] == 1
+    assert summary["gpt_load_unpriced_request_count"] == 1

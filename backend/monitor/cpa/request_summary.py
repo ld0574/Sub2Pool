@@ -16,12 +16,18 @@ def request_summary(events, config):
             "reasoning_tokens",
             "total_tokens",
             "unpriced_request_count",
+            "cpa_unpriced_request_count",
+            "gpt_load_unpriced_request_count",
         ],
         0,
     )
     cost = Decimal(0)
     latency_sum = ttft_sum = latency_count = ttft_count = 0
     fields = [
+        "source",
+        "source_cost_nano_usd",
+        "cost_state",
+        "pricing_completeness",
         "model",
         "requested_service_tier",
         "response_service_tier",
@@ -40,6 +46,9 @@ def request_summary(events, config):
         result["request_count"] += 1
         result["failed_count"] += int(event.failed)
         result["unpriced_request_count"] += int(unknown)
+        if unknown:
+            source = "gpt_load" if event.source == "gpt_load" else "cpa"
+            result[f"{source}_unpriced_request_count"] += 1
         for field in fields[-5:]:
             result[field] += getattr(event, field)
         if event.latency_ms > 0:

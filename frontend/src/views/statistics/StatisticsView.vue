@@ -44,6 +44,20 @@ const unpricedCount = computed(
       0,
     ) ?? 0,
 );
+const cpaUnpricedCount = computed(
+  () =>
+    data.value?.cpa_api_key_series.reduce(
+      (sum, row) => sum + row.cpa_unpriced_request_count,
+      0,
+    ) ?? 0,
+);
+const gptLoadUnpricedCount = computed(
+  () =>
+    data.value?.cpa_api_key_series.reduce(
+      (sum, row) => sum + row.gpt_load_unpriced_request_count,
+      0,
+    ) ?? 0,
+);
 function pricesSaved() {
   void load();
 }
@@ -178,21 +192,22 @@ onMounted(initialize);
     role="status"
   >
     <div>
-      <p>
-        当前统计范围内 {{ unpricedCount }} 次请求缺少模型定价，费用尚未计入。
-      </p>
-      <p class="text-sm">
-        {{
-          data?.account.provider === "gpt_load"
-            ? "费用以 GPT-Load 日志中的冻结计价结果为准，请在 GPT-Load 中补齐对应模型价格。"
-            : auth.isStaff
-              ? "可查看缺价模型并同步基础价格，保存后自动重算历史。"
-              : "请联系管理员同步模型价格。"
+      <p>当前统计范围内 {{ unpricedCount }} 次请求尚未计价，费用尚未计入。</p>
+      <p v-if="cpaUnpricedCount" class="text-sm">
+        其中 {{ cpaUnpricedCount }} 次 CPA 请求缺少本地模型价格。{{
+          auth.isStaff
+            ? "可查看缺价模型并同步基础价格，保存后自动重算历史。"
+            : "请联系管理员同步模型价格。"
         }}
+      </p>
+      <p v-if="gptLoadUnpricedCount" class="text-sm">
+        其中 {{ gptLoadUnpricedCount }} 次 GPT-Load
+        请求的上游日志未计价，本地价格同步无法补齐，请检查 GPT-Load
+        的模型价格配置。
       </p>
     </div>
     <button
-      v-if="auth.isStaff && data?.account.provider === 'cpa'"
+      v-if="auth.isStaff && cpaUnpricedCount"
       class="btn btn-sm"
       @click="pricingDialog?.open(true)"
     >
@@ -228,7 +243,11 @@ onMounted(initialize);
   />
   <APIUsageBreakdownDialog ref="apiUsageDialog" />
   <CPAModelPricingDialog
-    v-if="auth.isStaff && data?.account.provider === 'cpa'"
+    v-if="
+      auth.isStaff &&
+      (data?.account.provider === 'cpa' ||
+        data?.account.provider === 'gpt_load')
+    "
     ref="pricingDialog"
     :account-id="selectedAccountId ?? undefined"
     @saved="pricesSaved"

@@ -210,6 +210,8 @@ export interface CPARequestSummary {
   reasoning_tokens: number;
   total_tokens: number;
   unpriced_request_count: number;
+  cpa_unpriced_request_count: number;
+  gpt_load_unpriced_request_count: number;
   usage_usd: number;
   average_latency_ms: number | null;
   average_ttft_ms: number | null;

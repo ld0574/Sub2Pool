@@ -323,6 +323,9 @@ def test_cpa_statistics_group_local_cost_by_hashed_api_key():
     assert series[0]["request_count"] == 2
     assert series[0]["token_count"] == 1_500_000
     assert series[0]["total_usage_usd"] == 1.5
+    assert series[0]["unpriced_request_count"] == 0
+    assert series[0]["cpa_unpriced_request_count"] == 0
+    assert series[0]["gpt_load_unpriced_request_count"] == 0
     assert series[0]["points"][0]["usage_usd"] == 1.5
 
 

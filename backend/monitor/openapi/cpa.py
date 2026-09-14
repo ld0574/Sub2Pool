@@ -286,6 +286,8 @@ def cpa_schemas():
                                         "reasoning_tokens",
                                         "total_tokens",
                                         "unpriced_request_count",
+                                        "cpa_unpriced_request_count",
+                                        "gpt_load_unpriced_request_count",
                                     )
                                 },
                                 "usage_usd": number,

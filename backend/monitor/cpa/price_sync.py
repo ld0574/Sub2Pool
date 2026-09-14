@@ -51,7 +51,11 @@ def fetch_catalog():
 
 
 def observed_models(account_id=None):
-    events = CPAUsageEvent.objects.all()
+    # Only legacy CPA events are repriced from the local catalog. GPT-Load
+    # events carry an immutable upstream cost (or an upstream ``unpriced``
+    # state), so a local CPA price must never be presented as a remedy for
+    # those events.
+    events = CPAUsageEvent.objects.filter(source="cpa")
     if account_id is not None:
         events = events.filter(account_id=account_id)
     return (
@@ -124,7 +128,11 @@ def sync_missing_prices(account_id=None):
     if not inventory["missing_model_count"]:
         return {**inventory, "added": [], "unresolved": []}
     models = fetch_catalog()
-    accounts = list(MonitoredAccount.objects.filter(provider="cpa").order_by("id"))
+    accounts = list(
+        MonitoredAccount.objects.filter(provider__in=("cpa", "gpt_load")).order_by(
+            "id"
+        )
+    )
     with fenced_fact_write(
         [account.fact_key for account in accounts], ttl=timedelta(minutes=30)
     ) as guards:

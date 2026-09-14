@@ -183,7 +183,9 @@ class SettingsView(AdminAPIView):
         cpa_account_ids = (
             {
                 account.fact_key
-                for account in MonitoredAccount.objects.filter(provider="cpa")
+                for account in MonitoredAccount.objects.filter(
+                    provider__in=("cpa", "gpt_load")
+                )
             }
             if changed_cpa_pricing
             else set()

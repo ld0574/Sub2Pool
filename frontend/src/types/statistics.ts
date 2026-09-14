@@ -116,6 +116,8 @@ export interface CPAAPIKeyUsageSeries {
   request_count: number;
   token_count: number;
   unpriced_request_count: number;
+  cpa_unpriced_request_count: number;
+  gpt_load_unpriced_request_count: number;
   points: CPAAPIKeyUsagePoint[];
 }
 export interface APIKeyUsageItem extends CorrectionBreakdown {

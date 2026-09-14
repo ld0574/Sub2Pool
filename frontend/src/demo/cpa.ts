@@ -121,6 +121,7 @@ function demoPrice(state: DemoState, model: string) {
 
 export function repriceCPADemo(state: DemoState) {
   for (const event of state.cpa?.events ?? []) {
+    if (event.source !== "cpa") continue;
     const match = demoPrice(state, event.model);
     event.unpriced = !match;
     const cached = Math.min(event.input_tokens, event.cached_input_tokens);
@@ -152,6 +153,7 @@ function demoPricingInventory(
 ): CPAPricingInventory {
   const groups = new Map<string, CPAPricingInventory["models"][number]>();
   for (const event of state.cpa?.events ?? []) {
+    if (event.source !== "cpa") continue;
     if (accountId != null && event.account_id !== accountId) continue;
     const match = demoPrice(state, event.model);
     const row = groups.get(event.model) ?? {
@@ -480,6 +482,8 @@ export function demoCPAKeySeries(
         request_count: 0,
         token_count: 0,
         unpriced_request_count: 0,
+        cpa_unpriced_request_count: 0,
+        gpt_load_unpriced_request_count: 0,
         points: [],
       };
       groups.set(event.key_id, series);
@@ -488,6 +492,11 @@ export function demoCPAKeySeries(
     series.request_count++;
     series.token_count += event.total_tokens;
     series.unpriced_request_count += Number(event.unpriced);
+    if (event.unpriced) {
+      if (event.source === "gpt_load")
+        series.gpt_load_unpriced_request_count += 1;
+      else series.cpa_unpriced_request_count += 1;
+    }
     const local = format.format(new Date(event.occurred_at));
     const label =
       precision === "day"
@@ -532,7 +541,9 @@ export function handleCPA({
     if (
       accountId != null &&
       !state.monitoredAccounts.some(
-        (a) => a.id === accountId && a.provider === "cpa",
+        (a) =>
+          a.id === accountId &&
+          (a.provider === "cpa" || a.provider === "gpt_load"),
       )
     )
       return fail("CPA 账号不存在", 404);
@@ -652,6 +663,12 @@ export function handleCPA({
             total_tokens: sum("total_tokens"),
             usage_usd: sum("usage_usd"),
             unpriced_request_count: events.filter((e) => e.unpriced).length,
+            cpa_unpriced_request_count: events.filter(
+              (e) => e.unpriced && e.source === "cpa",
+            ).length,
+            gpt_load_unpriced_request_count: events.filter(
+              (e) => e.unpriced && e.source === "gpt_load",
+            ).length,
             average_latency_ms: average("latency_ms"),
             average_ttft_ms: average("ttft_ms"),
           }
