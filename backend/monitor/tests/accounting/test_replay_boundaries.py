@@ -167,6 +167,69 @@ def test_cpa_reconnect_baseline_splits_out_uncollected_gap():
 
 
 @pytest.mark.django_db
+def test_adjacent_reliable_collection_intervals_keep_one_cost_percent_segment():
+    config = AppSettings.load()
+    account = create_cpa_account()
+    first_at = timezone.now().replace(microsecond=0)
+    cutover_at = first_at + timedelta(hours=1)
+    reset_at = first_at + timedelta(days=3)
+    first = Observation.objects.create(
+        account_id=account.fact_key,
+        source="manual",
+        observed_at=first_at,
+        window_seconds=604800,
+        upstream_resets_at=reset_at,
+        upstream_used_percent=Decimal("45"),
+        raw_selected_total_cost=Decimal("10"),
+        selected_total_cost=Decimal("10"),
+        total_standard_cost=Decimal("10"),
+        total_actual_cost=Decimal("10"),
+        effective_usd_per_percent=Decimal("16"),
+        raw_window={"provider": "cpa"},
+    )
+    continued = Observation.objects.create(
+        account_id=account.fact_key,
+        source="manual",
+        observed_at=cutover_at + timedelta(minutes=30),
+        window_seconds=604800,
+        upstream_resets_at=reset_at,
+        upstream_used_percent=Decimal("46"),
+        raw_selected_total_cost=Decimal("14"),
+        selected_total_cost=Decimal("14"),
+        total_standard_cost=Decimal("14"),
+        total_actual_cost=Decimal("14"),
+        effective_usd_per_percent=Decimal("16"),
+        raw_window={"provider": "gpt_load"},
+    )
+    CPAAccountCollectionInterval.objects.create(
+        account=account,
+        session_key="cpa-before-cutover",
+        connected_at=first_at,
+        disconnected_at=cutover_at,
+        end_reliable=True,
+    )
+    CPAAccountCollectionInterval.objects.create(
+        account=account,
+        session_key="gpt-load-after-cutover",
+        connected_at=cutover_at,
+    )
+
+    rebuild_account(account.fact_key, config)
+    first.refresh_from_db()
+    continued.refresh_from_db()
+
+    assert first.attribution_started_at == first.observed_at
+    assert continued.attribution_started_at == first.observed_at
+    assert continued.interval_used_percent == Decimal("1")
+    assert continued.selected_total_cost == Decimal("4.000000")
+    assert continued.valid_sample is True
+    assert (
+        continued.raw_window["replay_segment_reason"]
+        == "provider_collection_baseline"
+    )
+
+
+@pytest.mark.django_db
 def test_cpa_manual_percentage_exclusion_keeps_connection_close_marker():
     config = AppSettings.load()
     account = create_cpa_account()

@@ -261,6 +261,13 @@ def infer_segments(
             collection_intervals,
             key=lambda interval: (interval.connected_at, interval.id),
         )
+        continuous_interval_ids = {
+            current.id
+            for previous, current in zip(intervals, intervals[1:])
+            if previous.end_reliable
+            and previous.disconnected_at is not None
+            and previous.disconnected_at >= current.connected_at
+        }
 
         def covering_interval(
             observation: Observation,
@@ -279,13 +286,20 @@ def infer_segments(
             )
 
         seen_intervals: set[int] = set()
+        has_covered_observation = False
         for observation in collection_history or observations:
             if observation.exclusion_source == "manual":
                 continue
             interval = covering_interval(observation)
             if interval is not None and interval.id not in seen_intervals:
-                collection_baseline_ids.add(observation.id)
+                if (
+                    not has_covered_observation
+                    or interval.id not in continuous_interval_ids
+                ):
+                    collection_baseline_ids.add(observation.id)
                 seen_intervals.add(interval.id)
+            if interval is not None:
+                has_covered_observation = True
 
         for observation in observations:
             if observation.exclusion_source == "manual":

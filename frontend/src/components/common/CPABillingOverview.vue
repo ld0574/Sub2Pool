@@ -118,7 +118,11 @@ const monthlySegments = computed(() => [
           </div>
           <div class="text-right">
             <div class="text-xs text-base-content/60">整车估算容量</div>
-            <strong class="text-xl">{{ money(week.capacity_usd) }}</strong>
+            <strong class="text-xl">{{
+              weeklyCapacityConflict(week)
+                ? "待重新校准"
+                : money(week.capacity_usd)
+            }}</strong>
           </div>
         </div>
         <p
