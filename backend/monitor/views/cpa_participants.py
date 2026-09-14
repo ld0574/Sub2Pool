@@ -330,6 +330,7 @@ class CPARequestsView(CPAReadView):
             rows.append(
                 {
                     "id": event.id,
+                    "source": event.source,
                     "occurred_at": event.occurred_at.isoformat(),
                     "request_id": event.request_id,
                     "api_key_hint": event.api_key_hint,

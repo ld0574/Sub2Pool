@@ -24,6 +24,7 @@ const emit = defineEmits<{
 }>();
 
 const selectedSourceKey = ref("");
+const selectedCutoverSourceKey = ref("");
 const selectedLegacyAccountId = ref<number | null>(null);
 const monitoredCredentialIds = computed(
   () =>
@@ -38,14 +39,29 @@ const availableAccounts = computed(() =>
     (item) => !monitoredCredentialIds.value.has(item.credential_id),
   ),
 );
-const selectedSource = computed(() => {
-  const [groupId, credentialId] = selectedSourceKey.value
-    .split(":")
-    .map(Number);
+const cutoverAccounts = computed(() =>
+  props.accounts.filter((source) => {
+    const managed = props.monitoredAccounts.find(
+      (item) => item.gpt_load_credential_id === source.credential_id,
+    );
+    return (
+      !managed ||
+      (managed.provider === "gpt_load" && managed.cpa_auth_index == null)
+    );
+  }),
+);
+
+function sourceByKey(key: string) {
+  const [groupId, credentialId] = key.split(":").map(Number);
   return props.accounts.find(
     (item) => item.group_id === groupId && item.credential_id === credentialId,
   );
-});
+}
+
+const selectedSource = computed(() => sourceByKey(selectedSourceKey.value));
+const selectedCutoverSource = computed(() =>
+  sourceByKey(selectedCutoverSourceKey.value),
+);
 
 function optionKey(account: GPTLoadAccountOption) {
   return `${account.group_id}:${account.credential_id}`;
@@ -55,6 +71,13 @@ function sourceLabel(account: GPTLoadAccountOption) {
   const identity =
     account.email || account.mask || `Credential ${account.credential_id}`;
   return `${account.group_name} · ${identity}${account.plan_type ? ` · ${account.plan_type}` : ""}`;
+}
+
+function cutoverSourceLabel(account: GPTLoadAccountOption) {
+  const managed = props.monitoredAccounts.find(
+    (item) => item.gpt_load_credential_id === account.credential_id,
+  );
+  return `${sourceLabel(account)}${managed ? " · 已误建为独立账号，将自动并回" : ""}`;
 }
 
 function addSelectedAccount() {
@@ -98,8 +121,8 @@ function addSelectedAccount() {
 }
 
 function cutoverSelectedAccount() {
-  if (!selectedLegacyAccountId.value || !selectedSource.value) return;
-  emit("cutover", selectedLegacyAccountId.value, selectedSource.value);
+  if (!selectedLegacyAccountId.value || !selectedCutoverSource.value) return;
+  emit("cutover", selectedLegacyAccountId.value, selectedCutoverSource.value);
 }
 </script>
 
@@ -239,6 +262,10 @@ function cutoverSelectedAccount() {
       >
         新增为独立 GPT-Load 账号
       </button>
+      <p v-if="legacyCpaAccounts.length" class="text-xs text-warning">
+        如果它与已有 CPA
+        是同一个订阅账号，请不要新增独立账号，请使用下方“原地续接”。
+      </p>
 
       <div
         v-if="legacyCpaAccounts.length"
@@ -262,9 +289,19 @@ function cutoverSelectedAccount() {
               {{ account.name }} · {{ account.cpa_auth_index }}
             </option>
           </select>
+          <select v-model="selectedCutoverSourceKey" class="select w-full">
+            <option value="">选择接管该 CPA 的 GPT-Load 账号</option>
+            <option
+              v-for="account in cutoverAccounts"
+              :key="optionKey(account)"
+              :value="optionKey(account)"
+            >
+              {{ cutoverSourceLabel(account) }}
+            </option>
+          </select>
           <button
             class="btn btn-sm btn-warning"
-            :disabled="!selectedLegacyAccountId || !selectedSource"
+            :disabled="!selectedLegacyAccountId || !selectedCutoverSource"
             @click="cutoverSelectedAccount"
           >
             原地续接到所选 GPT-Load 账号

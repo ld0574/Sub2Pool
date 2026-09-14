@@ -69,6 +69,8 @@ const requestLabel = (item: CPARequest) => {
   const effort = item.reasoning_effort?.trim();
   return effort ? `${keyLabel(item)} · 思考 ${effort}` : keyLabel(item);
 };
+const requestSourceLabel = (item: CPARequest) =>
+  item.source === "gpt_load" ? "GPT-Load" : "CPA";
 const speed = (item: CPARequest) =>
   item.latency_ms > item.ttft_ms && item.ttft_ms > 0 && item.output_tokens > 0
     ? (item.output_tokens / ((item.latency_ms - item.ttft_ms) / 1000)).toFixed(
@@ -102,15 +104,12 @@ const metrics = computed(() => {
       tone: "text-warning",
     },
     {
-      label:
-        selectedAccount.value?.provider === "gpt_load"
-          ? "日志费用"
-          : "估算费用",
+      label: "请求费用",
       value: s ? money(s.usage_usd) : "—",
       note: s?.unpriced_request_count
         ? `${s.unpriced_request_count} 次缺价，尚未计入`
         : selectedAccount.value?.provider === "gpt_load"
-          ? "使用 GPT-Load 日志冻结计价"
+          ? "CPA 按模型价格，GPT-Load 按日志计价"
           : "按已配置模型价格估算",
       icon: "banknotes",
       tone: "text-accent",
@@ -540,8 +539,13 @@ onMounted(async () => {
                   <div class="truncate font-medium" :title="item.model">
                     {{ item.model }}
                   </div>
-                  <div class="mt-1 text-xs text-base-content/60">
-                    {{ requestLabel(item) }}
+                  <div class="mt-1 flex items-center gap-2">
+                    <span class="badge badge-outline badge-xs">{{
+                      requestSourceLabel(item)
+                    }}</span>
+                    <span class="truncate text-xs text-base-content/60">{{
+                      requestLabel(item)
+                    }}</span>
                   </div>
                 </td>
                 <td>
@@ -621,7 +625,12 @@ onMounted(async () => {
             <div class="card-body gap-3 p-4">
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
-                  <h3 class="truncate font-medium">{{ item.model }}</h3>
+                  <div class="flex items-center gap-2">
+                    <h3 class="truncate font-medium">{{ item.model }}</h3>
+                    <span class="badge badge-outline badge-xs">{{
+                      requestSourceLabel(item)
+                    }}</span>
+                  </div>
                   <p class="mt-1 text-xs text-base-content/60">
                     {{ requestLabel(item) }}
                   </p>
@@ -759,7 +768,7 @@ onMounted(async () => {
         </div>
         <p class="mt-2 text-sm text-base-content/60">
           {{ formatTime(selection.occurred_at) }} ·
-          {{ requestLabel(selection) }}
+          {{ requestSourceLabel(selection) }} · {{ requestLabel(selection) }}
         </p>
         <dl class="mt-6 grid grid-cols-2 gap-5 text-sm">
           <div
@@ -803,7 +812,7 @@ onMounted(async () => {
         </dl>
         <p class="mt-5 text-xs leading-5 text-base-content/60">
           {{
-            selectedAccount?.provider === "gpt_load"
+            selection.source === "gpt_load"
               ? "费用使用 GPT-Load 日志中的冻结计价结果。"
               : "费用按当前模型价格估算。"
           }}输出速度按输出 Token ÷（总耗时 − 首 Token

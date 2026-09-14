@@ -423,11 +423,22 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
     const account = monitoredAccounts.value.find(
       (item) => item.id === accountId,
     );
+    const accidental = monitoredAccounts.value.find(
+      (item) =>
+        item.provider === "gpt_load" &&
+        item.cpa_auth_index == null &&
+        item.gpt_load_group_id === source.group_id &&
+        item.gpt_load_credential_id === source.credential_id,
+    );
     if (
       !(await confirmAction({
-        title: "将 CPA 账号续接到 GPT-Load？",
-        message: `“${account?.name ?? `账号 ${accountId}`}”将停止接收新的 CPA usage 事件，并从当前时刻开始同步 GPT-Load 日志。旧请求、本周期已用额度、额度池和历史合同都会保留。`,
-        confirmLabel: "确认原地续接",
+        title: accidental
+          ? "将误建账号并回原 CPA？"
+          : "将 CPA 账号续接到 GPT-Load？",
+        message: accidental
+          ? `误建的独立账号“${accidental.name}”将并回“${account?.name ?? `账号 ${accountId}`}”。原 CPA 账号、额度池和成员分配保持不变；已同步的 GPT-Load 日志会迁入同一账号。`
+          : `“${account?.name ?? `账号 ${accountId}`}”将停止接收新的 CPA usage 事件，并从当前时刻开始同步 GPT-Load 日志。旧请求、本周期已用额度、额度池和历史合同都会保留。`,
+        confirmLabel: accidental ? "确认并回并续接" : "确认原地续接",
         tone: "warning",
       }))
     ) {
@@ -446,8 +457,9 @@ export function useSettingsPage(confirmAction: ConfirmAction) {
       });
       await loadMonitoredAccounts();
       historyRebuildPlan.value = null;
-      success.value =
-        "账号已原地续接到 GPT-Load；本周期旧用量保留，新请求将继续累计。";
+      success.value = accidental
+        ? "误建账号已并回原 CPA；同一额度池保留，CPA 与 GPT-Load 请求继续累计。"
+        : "账号已原地续接到 GPT-Load；本周期旧用量保留，新请求将继续累计。";
     } catch (error) {
       message.value =
         error instanceof ApiError ? error.message : "续接 GPT-Load 失败";

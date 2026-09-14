@@ -33,6 +33,7 @@ from monitor.models import (
     Participant,
     ParticipantSnapshot,
     PoolParticipant,
+    UsageSamplePoint,
 )
 from monitor.tests.helpers import create_cpa_account, create_monitored_account, jwt_login
 
@@ -590,3 +591,220 @@ def test_cpa_cutover_preserves_fact_identity_and_historical_rows(monkeypatch):
     interval = new_account.cpa_collection_intervals.get()
     assert interval.connected_at == new_account.gpt_load_cutover_at
     assert interval.disconnected_at is None
+
+
+@pytest.mark.django_db
+def test_cpa_cutover_absorbs_accidentally_created_independent_account(monkeypatch):
+    get_user_model().objects.create_superuser(
+        "owner",
+        "owner@example.com",
+        "very-strong-password",
+    )
+    client = Client()
+    headers, _response = jwt_login(client)
+    account = create_cpa_account("legacy-auth", name="Original subscription")
+    config = AppSettings.load()
+    config.cpa_model_pricing = {
+        "legacy-model": {"input": "10", "cached_input": "1", "output": "30"}
+    }
+    config.save()
+    now = timezone.now()
+    cycle_start = now - timedelta(days=2)
+    account.created_at = cycle_start
+    account.save(update_fields=["created_at"])
+    original_pk = account.pk
+    original_pool_id = account.pool_id
+
+    participant = Participant.objects.create(name="Alice")
+    PoolParticipant.objects.create(
+        pool=account.pool,
+        participant=participant,
+        share_percent=100,
+    )
+    record_contract(account, cycle_start)
+    CPAAccountCollectionInterval.objects.create(
+        account=account,
+        session_key="legacy-cpa-session",
+        connected_at=cycle_start,
+    )
+    legacy_key = CPAAPIKey.objects.create(
+        source="cpa",
+        key_hash="a" * 64,
+        hint="old1",
+    )
+    CPAKeyBinding.objects.create(
+        key=legacy_key,
+        participant=participant,
+        started_at=cycle_start,
+    )
+    legacy_event = CPAUsageEvent.objects.create(
+        account=account,
+        event_fingerprint="legacy-before-accidental-account",
+        request_id="legacy-request",
+        source="cpa",
+        occurred_at=now - timedelta(minutes=20),
+        model="legacy-model",
+        api_key_hash=legacy_key.key_hash,
+        api_key_hint=legacy_key.hint,
+        input_tokens=1_000_000,
+        total_tokens=1_000_000,
+    )
+    legacy_observation = Observation.objects.create(
+        account_id=account.fact_key,
+        observed_at=now - timedelta(minutes=15),
+        upstream_resets_at=cycle_start + timedelta(days=7),
+        upstream_used_percent=Decimal("20"),
+        raw_selected_total_cost=Decimal("1"),
+        selected_total_cost=Decimal("1"),
+        total_standard_cost=Decimal("1"),
+        total_actual_cost=Decimal("1"),
+        effective_usd_per_percent=Decimal("0.05"),
+        raw_window={"provider": "cpa"},
+    )
+
+    created = client.post(
+        "/api/settings/monitored-accounts",
+        data=json.dumps(
+            {
+                "provider": "gpt_load",
+                "gpt_load_group_id": 11,
+                "gpt_load_credential_id": 21,
+                "name": "Accidental independent account",
+                "enabled": True,
+            }
+        ),
+        content_type="application/json",
+        **headers,
+    )
+    assert created.status_code == 201, created.json()
+    accidental = MonitoredAccount.objects.get(pk=created.json()["data"]["id"])
+    accidental_pk = accidental.pk
+    accidental_pool_id = accidental.pool_id
+    cutover_at = accidental.gpt_load_cutover_at
+    assert cutover_at is not None
+
+    imported_key = CPAAPIKey.objects.create(
+        source="gpt_load",
+        external_key_id=71,
+        key_hash=access_key_hash(71),
+        hint="new1",
+    )
+    CPAKeyBinding.objects.create(
+        key=imported_key,
+        participant=participant,
+        started_at=cutover_at,
+    )
+    imported_at = timezone.now()
+    imported_event = CPAUsageEvent.objects.create(
+        account=accidental,
+        event_fingerprint="gpt-load-after-accidental-account",
+        request_id="gpt-load-request",
+        source="gpt_load",
+        source_cost_nano_usd=2_000_000_000,
+        occurred_at=imported_at,
+        model="gpt-5",
+        api_key_hash=imported_key.key_hash,
+        api_key_hint=imported_key.hint,
+    )
+    point = UsageSamplePoint.objects.create(
+        account_id=accidental.fact_key,
+        observed_at=imported_at,
+    )
+    imported_observation = Observation.objects.create(
+        account_id=accidental.fact_key,
+        sample_point=point,
+        observed_at=imported_at,
+        upstream_resets_at=cycle_start + timedelta(days=7),
+        upstream_used_percent=Decimal("21"),
+        raw_selected_total_cost=Decimal("2"),
+        selected_total_cost=Decimal("2"),
+        total_standard_cost=Decimal("2"),
+        total_actual_cost=Decimal("2"),
+        effective_usd_per_percent=Decimal("0.05"),
+        raw_window={"provider": "gpt_load"},
+    )
+    record_contract(accidental, cutover_at)
+
+    class FakeGPTLoadClient:
+        def __init__(self, _config):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def list_source_accounts(self):
+            return [
+                {
+                    "group_id": 11,
+                    "group_name": "Codex",
+                    "credential_id": 21,
+                    "email": "owner@example.com",
+                }
+            ]
+
+    monkeypatch.setattr("monitor.views.settings.GPTLoadClient", FakeGPTLoadClient)
+
+    response = client.post(
+        f"/api/settings/monitored-accounts/{account.pk}/gpt-load-cutover",
+        data=json.dumps({"group_id": 11, "credential_id": 21}),
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["data"]["absorbed_account_id"] == accidental_pk
+    assert not MonitoredAccount.objects.filter(pk=accidental_pk).exists()
+    assert not account.__class__.objects.filter(pool_id=accidental_pool_id).exists()
+
+    account.refresh_from_db()
+    assert account.pk == original_pk
+    assert account.pool_id == original_pool_id
+    assert account.provider == "gpt_load"
+    assert account.cpa_auth_index == "legacy-auth"
+    assert account.gpt_load_group_id == 11
+    assert account.gpt_load_credential_id == 21
+    assert account.gpt_load_cutover_at == cutover_at
+    assert set(account.cpa_usage_events.values_list("pk", flat=True)) == {
+        legacy_event.pk,
+        imported_event.pk,
+    }
+    legacy_observation.refresh_from_db()
+    imported_observation.refresh_from_db()
+    point.refresh_from_db()
+    assert legacy_observation.account_id == account.fact_key
+    assert imported_observation.account_id == account.fact_key
+    assert point.account_id == account.fact_key
+    assert imported_observation.raw_selected_total_cost >= Decimal("2")
+    assert list(account.pool.allocations.values_list("participant_id", "share_percent")) == [
+        (participant.id, Decimal("100"))
+    ]
+    assert all(
+        contract.allocations
+        == [{"participant_id": participant.id, "share_percent": "100.000"}]
+        for contract in account.cpa_contracts.all()
+    )
+    intervals = list(account.cpa_collection_intervals.order_by("connected_at"))
+    assert len(intervals) == 2
+    assert intervals[0].disconnected_at == cutover_at
+    assert intervals[1].connected_at == cutover_at
+
+    _observation, _start, totals, total, _coverage, _snapshots, _latest = (
+        account_summary(account, config, imported_at, owner_index())
+    )
+    assert totals[participant.id]["usage_usd"] == Decimal("12")
+    assert total["usage_usd"] == Decimal("12")
+
+    requests = client.get(
+        f"/api/cpa/requests?account_id={account.id}&days=7",
+        **headers,
+    )
+    assert requests.status_code == 200, requests.json()
+    request_rows = requests.json()["data"]["items"]
+    assert {row["request_id"] for row in request_rows} == {
+        "legacy-request",
+        "gpt-load-request",
+    }
+    assert {row["source"] for row in request_rows} == {"cpa", "gpt_load"}

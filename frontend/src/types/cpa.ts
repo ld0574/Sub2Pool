@@ -180,6 +180,7 @@ export interface CPAClaim {
 }
 export interface CPARequest {
   id: number;
+  source: "cpa" | "gpt_load";
   occurred_at: string;
   request_id: string;
   api_key_hint: string;
