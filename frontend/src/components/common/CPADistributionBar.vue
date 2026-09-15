@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatCurrency } from "@/utils/formatters";
-const props = defineProps<{
-  label: string;
-  percentBasis: string;
-  capacity: number | null;
-  segments: {
+const props = withDefaults(
+  defineProps<{
     label: string;
-    value: number | null;
-    color: string;
-    forecast?: boolean;
-  }[];
-}>();
+    percentBasis: string;
+    capacity: number | null;
+    showEmptyTrack?: boolean;
+    segments: {
+      label: string;
+      value: number | null;
+      color: string;
+      forecast?: boolean;
+    }[];
+  }>(),
+  { showEmptyTrack: true },
+);
 const visibleSegments = computed(() =>
   props.segments.filter(
     (s) => !["未归属", "其他历史成员"].includes(s.label) || s.value !== 0,
@@ -44,7 +48,10 @@ const shareLabel = (value: number | null) =>
       role="img"
       :aria-label="label + '，具体金额见下方图例'"
     >
-      <div class="flex h-7 min-w-full bg-base-300/40">
+      <div
+        class="flex h-7 min-w-full"
+        :class="showEmptyTrack ? 'bg-base-300/40' : 'bg-transparent'"
+      >
         <div
           v-for="(segment, i) in visibleSegments"
           :key="i"

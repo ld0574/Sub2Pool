@@ -521,6 +521,11 @@ def weekly_distribution(accounts, members, config, now, bindings):
         )
         reliable = current["reliable"] if current else None
         capacity = reliable[1] if reliable else None
+        upstream_remaining = (
+            max(ZERO, Decimal("100") - obs.upstream_used_percent)
+            if obs and obs.upstream_resets_at > now
+            else None
+        )
         complete = bool(
             current
             and coverage_data(account, current["start"], now)["complete"]
@@ -537,14 +542,18 @@ def weekly_distribution(accounts, members, config, now, bindings):
                 capacity_usd=float(capacity) if capacity is not None else None,
                 capacity_estimate=current.get("capacity_estimate") if current else None,
                 coverage_complete=complete,
-                remaining_usd=float(max(ZERO, capacity - total["usage_usd"]))
-                if capacity is not None and complete
-                else None,
-                upstream_remaining_percent=float(
-                    max(ZERO, 100 - obs.upstream_used_percent)
-                )
-                if obs and obs.upstream_resets_at > now
-                else None,
+                remaining_usd=(
+                    0.0
+                    if upstream_remaining == ZERO
+                    else float(max(ZERO, capacity - total["usage_usd"]))
+                    if capacity is not None and complete
+                    else None
+                ),
+                upstream_remaining_percent=(
+                    float(upstream_remaining)
+                    if upstream_remaining is not None
+                    else None
+                ),
                 usage_usd=float(total["usage_usd"]),
                 unpriced_request_count=total["unpriced_request_count"],
                 unattributed_usd=float(usage[None]["usage_usd"]),

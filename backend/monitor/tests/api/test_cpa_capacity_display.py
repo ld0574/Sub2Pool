@@ -62,6 +62,23 @@ def test_reconnect_capacity_matches_particle_trajectory_without_fake_balance(set
     assert a.latest_balance_usd == Decimal("123")
 
 
+def test_upstream_exhaustion_overrides_incomplete_capacity_balance(setup):
+    config, account, a, b, now = partial_cycle(setup)
+    latest = Observation.objects.filter(account_id=account.fact_key).latest(
+        "observed_at"
+    )
+    Observation.objects.filter(pk=latest.pk).update(upstream_used_percent=100)
+
+    week = weekly_distribution(
+        [account], {a.id: a, b.id: b}, config, now, owner_index()
+    )[0]
+
+    assert week["coverage_complete"] is False
+    assert week["capacity_usd"] is not None
+    assert week["upstream_remaining_percent"] == 0
+    assert week["remaining_usd"] == 0
+
+
 def test_missing_history_does_not_hide_capacity_but_settlement_stays_unknown(setup):
     s = scenario(setup)
     account = s[2]

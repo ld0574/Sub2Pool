@@ -34,6 +34,9 @@ const week = computed(() =>
     (w) => w.account_id === (breakdown.value?.account_id ?? selected.value),
   ),
 );
+const upstreamExhausted = computed(
+  () => week.value?.upstream_remaining_percent === 0,
+);
 const budget = computed(() =>
   week.value?.capacity_usd != null && props.member.share_percent != null
     ? (week.value.capacity_usd * props.member.share_percent) / 100
@@ -47,8 +50,11 @@ const used = computed(
     breakdown.value?.usage_usd ??
     props.member.usage_usd,
 );
-const remaining = computed(() =>
+const budgetDelta = computed(() =>
   budget.value == null ? null : budget.value - used.value,
+);
+const remaining = computed(() =>
+  upstreamExhausted.value ? 0 : budgetDelta.value,
 );
 const progress = computed(() =>
   budget.value != null && budget.value > 0
@@ -91,9 +97,12 @@ const compactTokens = computed(() =>
             >车主</span
           >
           <span
-            v-if="remaining != null && remaining < 0"
+            v-if="budgetDelta != null && budgetDelta < 0"
             class="badge badge-sm badge-warning"
             >本周超预算</span
+          >
+          <span v-if="upstreamExhausted" class="badge badge-sm badge-error"
+            >上游已耗尽</span
           >
         </div>
       </header>
@@ -130,10 +139,14 @@ const compactTokens = computed(() =>
           <dd class="mt-1 font-semibold tabular-nums">{{ money(budget) }}</dd>
         </div>
         <div>
-          <dt class="text-xs text-base-content/60">估算剩余</dt>
+          <dt class="text-xs text-base-content/60">
+            {{ upstreamExhausted ? "当前可用" : "估算剩余" }}
+          </dt>
           <dd
             class="mt-1 font-semibold tabular-nums"
-            :class="remaining != null && remaining < 0 ? 'text-warning' : ''"
+            :class="
+              budgetDelta != null && budgetDelta < 0 ? 'text-warning' : ''
+            "
           >
             {{ money(remaining) }}
           </dd>
@@ -148,9 +161,12 @@ const compactTokens = computed(() =>
           :aria-label="`${member.participant_name}已用个人预算 ${progress.toFixed(1)}%`"
         />
         <p class="text-xs text-base-content/60">
-          已用个人预算 {{ progress.toFixed(1) }}%
+          已采集用量 / 个人预算 {{ progress.toFixed(1) }}%
         </p>
       </div>
+      <p v-if="upstreamExhausted" class="text-xs text-base-content/70">
+        当前可用按上游余额显示为 0；个人进度不包含无法归属的漏采消耗。
+      </p>
       <section v-if="billing" class="space-y-3 border-t border-base-300 pt-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h4 class="text-sm font-semibold">账期累计</h4>

@@ -39,7 +39,10 @@ const weeklyCapacityConflict = (week: CPAWeeklyDistribution) =>
   week.upstream_remaining_percent > 0;
 const comparableWeeklyCapacity = (week: CPAWeeklyDistribution) =>
   weeklyCapacityConflict(week) ? null : week.capacity_usd;
+const weeklyExhausted = (week: CPAWeeklyDistribution) =>
+  week.upstream_remaining_percent === 0;
 const weeklyRemaining = (week: CPAWeeklyDistribution) => {
+  if (weeklyExhausted(week)) return 0;
   if (week.remaining_usd != null) return week.remaining_usd;
   const capacity = comparableWeeklyCapacity(week);
   return capacity == null ? null : Math.max(0, capacity - week.usage_usd);
@@ -151,11 +154,15 @@ const monthlySegments = computed(() => [
             week.upstream_remaining_percent?.toFixed(1)
           }}%。暂不判定超额，以上游周限为准；待缺价请求补齐或后续有效观测后重新校准。
         </p>
+        <p v-if="weeklyExhausted(week)" class="text-sm text-warning">
+          上游本周额度已耗尽。模型容量与已采集费用之间的差额不再视为可用余额；采集缺口或估值误差仍可能造成图表留白。
+        </p>
         <p
           v-if="
             week.capacity_usd != null &&
             week.coverage_complete === false &&
-            !weeklyCapacityConflict(week)
+            !weeklyCapacityConflict(week) &&
+            !weeklyExhausted(week)
           "
           class="text-xs text-base-content/60"
         >
@@ -165,6 +172,7 @@ const monthlySegments = computed(() => [
           label="成员已采集消耗 / 估算剩余"
           percent-basis="本周额度"
           :capacity="comparableWeeklyCapacity(week)"
+          :show-empty-track="!weeklyExhausted(week)"
           :segments="[
             ...week.members.map((m) => ({
               label: memberName(m.participant_id),

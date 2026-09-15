@@ -137,7 +137,8 @@ const members = computed(() =>
         >
       </div>
       <p v-if="members.length" class="text-xs text-base-content/60">
-        周预算按当前份额分配，剩余＝预算或预计权益－已采集消耗，漏采和缺价尚未扣除；账期剩余仅供跨周协调。
+        周预算按当前份额分配，剩余＝预算或预计权益－已采集消耗，漏采和缺价尚未扣除；上游明确耗尽时，成员当前可用统一按
+        0 显示。账期剩余仅供跨周协调。
         <span
           v-if="
             data.billing_summary?.configured &&
