@@ -16,6 +16,7 @@ from ..accounting.boundaries import same_official_reset
 from ..models import CPAUsageEvent, Observation
 from ..reporting.recommendations import _capacity_values
 from .capacity_estimate import particle_capacity_estimate
+from .owner_residual import estimate_unlogged_owner_cost
 from .participants import coverage_data, event_owner
 from .usage import cpa_event_cost
 
@@ -185,6 +186,7 @@ def billing_summary(user, account, config, now, bindings, members):
         expired_usd=None,
         available_usd=None,
         usage_usd=0.0,
+        estimated_unlogged_usd=0.0,
         unattributed_usd=0.0,
         other_members_usd=0.0,
         unallocated_usd=None,
@@ -209,6 +211,7 @@ def billing_summary(user, account, config, now, bindings, members):
         defaultdict(lambda: ZERO) for _ in range(4)
     )
     actual = future = expired = available = reserve = ZERO
+    estimated_unlogged = defaultdict(lambda: ZERO)
     future_known = True
     capacity_known = True
     contracts_known = True
@@ -331,13 +334,39 @@ def billing_summary(user, account, config, now, bindings, members):
             amount = capacity * weight if capacity is not None else None
             closed = row["end"] <= now
             full_used = sum((cost for _, cost, _ in cycle_costs), ZERO)
+            residual = None
+            if (
+                not predicted
+                and capacity is not None
+                and weight
+                and not row_reasons
+            ):
+                coverage = coverage_data(
+                    selected,
+                    row["start"],
+                    min(row["end"], now),
+                )
+                if coverage["complete"]:
+                    residual = estimate_unlogged_owner_cost(
+                        account_id=selected.id,
+                        observation=row["observation"],
+                        known_cost=full_used,
+                        bindings=bindings,
+                    )
+            residual_amount = residual.amount_usd if residual else ZERO
+            if residual is not None:
+                amount_for_owner = residual_amount * weight
+                usage[residual.participant_id] += amount_for_owner
+                estimated_unlogged[residual.participant_id] += amount_for_owner
+                if closed:
+                    completed_usage[residual.participant_id] += amount_for_owner
             loss = (
-                max(ZERO, capacity - full_used) * weight
+                max(ZERO, capacity - full_used - residual_amount) * weight
                 if closed and capacity is not None and not row_reasons
                 else None
             )
             spendable = (
-                max(ZERO, capacity - full_used) * weight
+                max(ZERO, capacity - full_used - residual_amount) * weight
                 if not closed
                 and not predicted
                 and capacity is not None
@@ -451,6 +480,7 @@ def billing_summary(user, account, config, now, bindings, members):
         expired_usd=float(expired) if known else None,
         available_usd=float(available) if known else None,
         usage_usd=float(sum(usage.values(), ZERO)),
+        estimated_unlogged_usd=float(sum(estimated_unlogged.values(), ZERO)),
         unattributed_usd=float(usage[None]),
         other_members_usd=float(
             sum(
@@ -485,6 +515,7 @@ def billing_summary(user, account, config, now, bindings, members):
             dict(
                 participant_id=pk,
                 usage_usd=float(usage[pk]),
+                estimated_unlogged_usd=float(estimated_unlogged[pk]),
                 usage_percent=float(usage[pk] / total * 100)
                 if capacity_known and contracts_known and total
                 else None,
@@ -555,6 +586,7 @@ def weekly_distribution(accounts, members, config, now, bindings):
                     else None
                 ),
                 usage_usd=float(total["usage_usd"]),
+                estimated_unlogged_usd=float(total["estimated_unlogged_usd"]),
                 unpriced_request_count=total["unpriced_request_count"],
                 unattributed_usd=float(usage[None]["usage_usd"]),
                 other_members_usd=float(
@@ -571,6 +603,9 @@ def weekly_distribution(accounts, members, config, now, bindings):
                     dict(
                         participant_id=pk,
                         usage_usd=float(usage[pk]["usage_usd"]),
+                        estimated_unlogged_usd=float(
+                            usage[pk]["estimated_unlogged_usd"]
+                        ),
                         usage_percent=float(usage[pk]["usage_usd"] / capacity * 100)
                         if capacity
                         else None,

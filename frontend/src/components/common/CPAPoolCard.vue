@@ -51,7 +51,7 @@ const members = computed(() =>
         请求统计更新于
         {{
           formatDateTime(data.generated_at)
-        }}。周权益卡截至各账号额度更新时间；分布与账期累计按最新采集请求计费，容量基于各周期可靠观测。
+        }}。周权益卡截至各账号额度更新时间；分布与账期累计按最新请求日志和官方额度观测计费，容量基于各周期可靠观测。
       </p>
       <p v-if="data.partial_scope" class="text-sm">
         当前仅汇总你获授权的池内账号。
@@ -137,7 +137,7 @@ const members = computed(() =>
         >
       </div>
       <p v-if="members.length" class="text-xs text-base-content/60">
-        周预算按当前份额分配，剩余＝预算或预计权益－已采集消耗，漏采和缺价尚未扣除；上游明确耗尽时，成员当前可用统一按
+        周预算按当前份额分配，剩余＝预算或预计权益－已计费用量；上游明确耗尽时，成员当前可用统一按
         0 显示。账期剩余仅供跨周协调。
         <span
           v-if="
@@ -202,6 +202,14 @@ const members = computed(() =>
                     channelLabel +
                     " 池后，未匹配 Key 的新请求将计入车主。"
               }}
+            </p>
+            <p
+              v-if="account.estimated_unlogged_usd"
+              class="text-sm text-warning"
+            >
+              另有
+              {{ formatCurrency(account.estimated_unlogged_usd) }}
+              为官方额度观测与请求日志差额，已按车主计入估算；这部分没有请求明细。
             </p>
             <CPAOwnerClaim
               v-if="auth.isStaff"
@@ -278,6 +286,14 @@ const members = computed(() =>
                   </td>
                   <td>
                     {{ formatCurrency(member.usage_usd) }}
+                    <p
+                      v-if="member.estimated_unlogged_usd"
+                      class="text-xs text-warning"
+                    >
+                      其中
+                      {{ formatCurrency(member.estimated_unlogged_usd) }}
+                      为车主估算
+                    </p>
                     <p v-if="member.unpriced_request_count" class="text-xs">
                       {{ member.unpriced_request_count }} 条未计价
                     </p>

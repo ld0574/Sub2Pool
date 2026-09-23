@@ -17,6 +17,7 @@ from ..models import (
 from ..reporting.recommendations import _capacity_values
 from .account_owner import account_owner_data
 from .collector_state import get_collector_status
+from .owner_residual import estimate_unlogged_owner_cost
 from .participants import coverage_data, event_owner, owner_index
 from .usage import cpa_event_cost
 
@@ -29,6 +30,7 @@ def _totals():
         "request_count": 0,
         "token_count": 0,
         "unpriced_request_count": 0,
+        "estimated_unlogged_usd": ZERO,
     }
 
 
@@ -72,6 +74,24 @@ def account_summary(account, config, now, bindings):
     coverage = coverage_data(
         account, start, observation.observed_at if observation else now
     )
+    if (
+        observation
+        and coverage["complete"]
+        and not total["unpriced_request_count"]
+    ):
+        residual = estimate_unlogged_owner_cost(
+            account_id=account.id,
+            observation=observation,
+            known_cost=total["usage_usd"],
+            bindings=bindings,
+        )
+        if residual is not None:
+            summaries[residual.participant_id]["usage_usd"] += residual.amount_usd
+            summaries[residual.participant_id]["estimated_unlogged_usd"] += (
+                residual.amount_usd
+            )
+            total["usage_usd"] += residual.amount_usd
+            total["estimated_unlogged_usd"] += residual.amount_usd
     snapshots = (
         {row.participant_id: row for row in observation.participant_snapshots.all()}
         if observation
@@ -202,6 +222,9 @@ def pool_summary(user, account, config=None):
                 "charged_percent": None,
                 "remaining_share_percent": None,
                 "usage_usd": float(values["usage_usd"]),
+                "estimated_unlogged_usd": float(
+                    values["estimated_unlogged_usd"]
+                ),
                 "estimated_capacity_usd": None,
                 "expected_entitlement_usd": None,
                 "consumed_entitlement_usd": None,
@@ -211,6 +234,15 @@ def pool_summary(user, account, config=None):
                 capacity, capacity_lo, capacity_hi, charged, charged_lo, charged_hi = (
                     _capacity_values(snapshot, config)
                 )
+                estimated_unlogged = values["estimated_unlogged_usd"]
+                estimated_unlogged_percent = (
+                    estimated_unlogged * 100 / capacity
+                    if capacity > ZERO
+                    else ZERO
+                )
+                charged += estimated_unlogged_percent
+                charged_lo += estimated_unlogged_percent
+                charged_hi += estimated_unlogged_percent
                 expected = shares[pk] * capacity / 100
                 consumed = charged * capacity / 100
                 remaining = expected - consumed
