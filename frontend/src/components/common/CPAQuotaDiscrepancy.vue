@@ -4,15 +4,19 @@ import { api, jsonBody } from "@/services/api";
 import { useAuthStore } from "@/stores/auth";
 import type {
   CPAQuotaAdjustmentPlan,
+  CPAQuotaDiscrepancy,
   CPAQuotaDiscrepancyAudit,
   CPAQuotaDiscrepancyAdmin,
-  CPAPoolSummary,
 } from "@/types/cpa";
 import { formatCurrency } from "@/utils/formatters";
 import { useDateTime } from "@/composables/useDateTime";
 
 const props = defineProps<{
-  account: CPAPoolSummary["accounts"][number];
+  account: {
+    account_id: number;
+    account_name: string;
+    quota_discrepancy?: CPAQuotaDiscrepancy | null;
+  };
 }>();
 const emit = defineEmits<{ refresh: [] }>();
 const auth = useAuthStore();
@@ -193,7 +197,13 @@ async function reverse(id: string) {
       {{ account.quota_discrepancy.reasons.join("；") }}
     </p>
     <p
-      v-if="!account.quota_discrepancy && auth.isStaff"
+      v-if="account.quota_discrepancy === undefined && auth.isStaff"
+      class="mt-1 text-xs text-base-content/60"
+    >
+      打开后可查看当前及历史周期的差额证据与调整记录。
+    </p>
+    <p
+      v-else-if="!account.quota_discrepancy && auth.isStaff"
       class="mt-1 text-xs text-base-content/60"
     >
       当前没有可展示的额度差额；仍可查看历史周期和调整记录。

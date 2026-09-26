@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import CPAAccountStatusCard from "./components/CPAAccountStatusCard.vue";
+import CPAQuotaDiscrepancy from "@/components/common/CPAQuotaDiscrepancy.vue";
 import CorrectionAmount from "@/components/common/CorrectionAmount.vue";
 import { onMounted, ref } from "vue";
 
@@ -249,6 +250,15 @@ onMounted(load);
             额度快照 {{ dateTime(account.usage.updated_at) }}
           </div>
         </header>
+
+        <CPAQuotaDiscrepancy
+          v-if="account.provider === 'gpt_load' && auth.isStaff"
+          :account="{
+            account_id: account.id,
+            account_name: accountName(account),
+          }"
+          @refresh="load"
+        />
 
         <section
           v-if="account.usage?.seven_day"
