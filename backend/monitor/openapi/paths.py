@@ -142,6 +142,8 @@ def openapi_paths() -> dict:
                     "对每个监控账号执行对应提供方的只读查询；"
                     "Sub2API 读取账号状态与请求统计，CPA 读取 Codex 周限并汇总"
                     "本地 usage 事件。单账号失败写入 warnings，不中断其他账号。"
+                    "每个账号同时返回仍在生效的临时禁用（temporary_disables）；"
+                    "该字段只描述本地记录，读取不会改动上游配置。"
                 ),
                 "operationId": "getAccountStatus",
                 "responses": {
@@ -250,7 +252,7 @@ def openapi_paths() -> dict:
                 ],
                 "responses": {
                     "200": _success_response(
-                        "由一个观测区间的原始请求事实按当前规则计算 FAST、长上下文与模型倍率修正。兼容保留 FAST URL。",
+                        "旧观测按冻结规则展示本地修正；新观测返回上游计费确认来源及说明，不返回本地修正金额。",
                         {"$ref": "#/components/schemas/FastCorrectionDetail"},
                     ),
                     "401": {"$ref": "#/components/responses/Unauthorized"},

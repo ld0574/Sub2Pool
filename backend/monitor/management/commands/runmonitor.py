@@ -9,7 +9,11 @@ from django.utils import timezone
 
 from monitor.engine import run_monitor
 from monitor.api_usage import refresh_due_api_usage_snapshots
+from monitor.balance_operations import auto_apply_recommendations
 from monitor.models import AppSettings, MonitoredAccount
+from monitor.upstream_pricing.service import run_automatic_migration
+from monitor.temporary_burst import sampling_policy
+from monitor.temporary_disable import restore_due_disables
 
 
 def schedule_next_run(
@@ -18,7 +22,7 @@ def schedule_next_run(
     now=None,
     cycle_started_at=None,
 ) -> int:
-    """记录下一次唤醒时间；按本轮开始时间对齐，避免把执行耗时叠加到间隔。"""
+    """Publish per-account deadlines; only the earliest due account wakes the worker."""
     current = now or timezone.now()
     interval_seconds = max(2, config.local_poll_minutes) * 60
     anchor = cycle_started_at or current
@@ -30,10 +34,21 @@ def schedule_next_run(
             seconds=elapsed_intervals * interval_seconds
         )
     sleep_seconds = math.ceil(max(0, (next_run - current).total_seconds()))
+    deadlines = []
+    for account in MonitoredAccount.objects.filter(enabled=True):
+        seconds, _accelerated = sampling_policy(account, config, current)
+        last_check = account.last_local_check_at if config.monitoring_enabled else None
+        account_anchor = last_check or anchor
+        deadline = account_anchor + timedelta(seconds=seconds)
+        if not last_check and deadline < current:
+            elapsed = (current - account_anchor).total_seconds()
+            deadline = account_anchor + timedelta(seconds=math.ceil(elapsed / seconds) * seconds)
+        MonitoredAccount.objects.filter(pk=account.pk).update(next_local_check_at=deadline)
+        deadlines.append(deadline)
+    if deadlines:
+        next_run = min(deadlines)
+        sleep_seconds = math.ceil(max(0, (next_run - current).total_seconds()))
     AppSettings.objects.filter(pk=config.pk).update(next_local_check_at=next_run)
-    MonitoredAccount.objects.filter(enabled=True).update(
-        next_local_check_at=next_run
-    )
     return sleep_seconds
 
 
@@ -53,12 +68,25 @@ class Command(BaseCommand):
                 cycle_started_at=cycle_started_at,
             )
             try:
+                pricing = run_automatic_migration()
+                if pricing is not None:
+                    self.stdout.write(f"上游计费迁移：{pricing.status}")
+            except Exception as exc:
+                # Failed migration never enables local corrections or stops raw collection.
+                self.stderr.write(f"上游计费迁移失败：{exc}")
+            try:
                 result = run_monitor(force_upstream=False, source="scheduled")
                 self.stdout.write(f"监控结果：{result}")
             except Exception as exc:
                 # 引擎已经记录错误并按配置发邮件；命令保持运行，等待配置修复或上游恢复。
                 self.stderr.write(f"监控失败：{exc}")
             else:
+                try:
+                    applications = auto_apply_recommendations()
+                    if applications["applied"] or applications["failed"]:
+                        self.stdout.write(f"自动应用建议额度：{applications}")
+                except Exception as exc:
+                    self.stderr.write(f"自动应用建议额度失败：{exc}")
                 try:
                     api_usage = refresh_due_api_usage_snapshots(
                         AppSettings.load()
@@ -83,4 +111,20 @@ class Command(BaseCommand):
                 cycle_started_at=cycle_started_at,
             )
             close_old_connections()
-            time.sleep(sleep_seconds)
+            sleep_seconds = max(2, sleep_seconds)
+            # Re-evaluate while idle so activation and per-account rollover change
+            # cadence without waiting through the previous full polling interval.
+            while sleep_seconds > 0:
+                time.sleep(min(5, sleep_seconds))
+                close_old_connections()
+                # 空闲等待期间也在到点后立刻恢复上游禁用，不必等下一个探测轮次。
+                try:
+                    restored = restore_due_disables()
+                except Exception as exc:
+                    self.stderr.write(f"临时禁用自动恢复失败：{exc}")
+                else:
+                    if restored["restored"] or restored["failed"]:
+                        self.stdout.write(f"临时禁用自动恢复：{restored}")
+                sleep_seconds = schedule_next_run(
+                    AppSettings.load(), cycle_started_at=cycle_started_at,
+                )

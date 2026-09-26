@@ -504,7 +504,7 @@ def test_cpa_membership_does_not_enter_sub2api_balance_guards(setup, monkeypatch
         captured.append(account_ids)
         raise LeaseBusyError("test scope")
 
-    monkeypatch.setattr("monitor.views.dashboard._acquire_guards", stop_after_scope)
+    monkeypatch.setattr("monitor.balance_operations._acquire_guards", stop_after_scope)
     client = Client()
     headers, _ = jwt_login(client)
     assert (

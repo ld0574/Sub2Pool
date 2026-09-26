@@ -5,6 +5,9 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 
 from .common import iso
+from ..billing_correction.settlement import balance_conversion_factor
+from ..temporary_burst import BURST_BALANCE, active_session, adjustment_for, cycle_for, prior_cycle_usage
+from ..fast_correction.prefix import FastCorrectionPrefix
 from ..models import (
     AccountParticipant,
     AppSettings,
@@ -229,6 +232,7 @@ def _constant_average_recommendation_bounds(
     selected_cost: Decimal,
     remaining_share_percent: Decimal,
     safety_factor: Decimal,
+    conversion_factor: Decimal,
 ) -> tuple[Decimal, Decimal]:
     """按截尾整数百分比反推容量区间，再换算参与者的剩余余额区间。"""
     observation = snapshot.observation
@@ -236,7 +240,7 @@ def _constant_average_recommendation_bounds(
     if used_percent_min <= 0:
         display_rate, _raw_rate = display_cycle_rates(observation, config)
         fallback = (
-            remaining_share_percent * display_rate * safety_factor
+            remaining_share_percent * display_rate * safety_factor * conversion_factor
         ).quantize(CENT, rounding=ROUND_HALF_UP)
         return fallback, fallback
 
@@ -253,10 +257,12 @@ def _constant_average_recommendation_bounds(
     recommended_min = (
         max(ZERO, capacity_min * share_ratio - selected_cost)
         * safety_factor
+        * conversion_factor
     ).quantize(CENT, rounding=ROUND_HALF_UP)
     recommended_max = (
         max(ZERO, capacity_max * share_ratio - selected_cost)
         * safety_factor
+        * conversion_factor
     ).quantize(CENT, rounding=ROUND_HALF_UP)
     return recommended_min, recommended_max
 
@@ -264,6 +270,8 @@ def _constant_average_recommendation_bounds(
 def _constant_average_values(
     snapshot: ParticipantSnapshot,
     config: AppSettings,
+    *,
+    correction_prefix: FastCorrectionPrefix | None = None,
 ) -> dict:
     """用起点至当前的累计成本比例生成只读展示值，不改写时变账本。"""
     selected_cost = max(ZERO, snapshot.selected_cost)
@@ -281,6 +289,9 @@ def _constant_average_values(
             selected_cost=selected_cost,
             remaining_share_percent=remaining,
             safety_factor=safety_factor,
+            conversion_factor=balance_conversion_factor(
+                snapshot, config, correction_prefix=correction_prefix
+            ),
         )
     )
     rights_exhausted = remaining <= ZERO
@@ -367,11 +378,15 @@ def _constant_average_values(
 def _display_snapshot_data(
     snapshot: ParticipantSnapshot,
     config: AppSettings,
+    *,
+    correction_prefix: FastCorrectionPrefix | None = None,
 ) -> dict:
     if snapshot.observation.account_id < 0 or config.weekly_quota_model != "constant_average":
         return snapshot_data(snapshot)
 
-    values = _constant_average_values(snapshot, config)
+    values = _constant_average_values(
+        snapshot, config, correction_prefix=correction_prefix
+    )
     return {
         "cpa_contract_known": snapshot.cpa_contract_known,
         "participant_id": snapshot.participant_id,
@@ -534,6 +549,9 @@ def _pool_source_values(
     snapshot: ParticipantSnapshot,
     config: AppSettings,
     share_percent: Decimal,
+    *,
+    correction_prefix: FastCorrectionPrefix | None = None,
+    charged_before: Decimal = ZERO,
 ) -> dict[str, Decimal]:
     (
         capacity_point,
@@ -543,6 +561,9 @@ def _pool_source_values(
         charged_lower,
         charged_upper,
     ) = _capacity_values(snapshot, config)
+    charged += charged_before
+    charged_lower += charged_before
+    charged_upper += charged_before
     remaining_lower = share_percent - charged_upper
     remaining_upper = share_percent - charged_lower
     expected_entitlement = share_percent * capacity_point / HUNDRED
@@ -559,12 +580,15 @@ def _pool_source_values(
         remaining_upper * capacity_min / HUNDRED,
         remaining_upper * capacity_max / HUNDRED,
     )
+    conversion_factor = balance_conversion_factor(
+        snapshot, config, correction_prefix=correction_prefix
+    )
     return {
         "capacity_point": capacity_point,
         "charged": charged,
-        "point": remaining_entitlement,
-        "lower": min(interval_products),
-        "upper": max(interval_products),
+        "point": remaining_entitlement * conversion_factor,
+        "lower": min(interval_products) * conversion_factor,
+        "upper": max(interval_products) * conversion_factor,
         "expected_entitlement": expected_entitlement,
         "consumed_entitlement": consumed_entitlement,
         "remaining_entitlement": remaining_entitlement,
@@ -576,6 +600,7 @@ def _pooled_safety_factor(
     participant: Participant,
     _accounts: list[MonitoredAccount],
     config: AppSettings,
+    correction_prefixes: dict[int, FastCorrectionPrefix],
 ) -> Decimal:
     candidates = list(
         Participant.objects.filter(
@@ -610,10 +635,15 @@ def _pooled_safety_factor(
             snapshot = latest_snapshot(candidate, account)
             if snapshot is None:
                 return config.safety_factor
+            if account.fact_key not in correction_prefixes:
+                correction_prefixes[account.fact_key] = FastCorrectionPrefix(
+                    account.fact_key, config.cost_basis, config
+                )
             net += _pool_source_values(
                 snapshot,
                 config,
                 candidate_allocations[account.pool_id],
+                correction_prefix=correction_prefixes[account.fact_key],
             )["point"]
         if net > ZERO:
             remaining_ids.append(candidate.id)
@@ -767,15 +797,28 @@ def aggregate_recommendation(
     remaining_entitlement = ZERO
     weighted_charged = ZERO
     total_capacity = ZERO
+    correction_prefixes: dict[int, FastCorrectionPrefix] = {}
+    burst_session = active_session(config)
+    burst_active = bool(burst_session and burst_session.participant_users.get(str(participant.id)) == participant.sub2api_user_id)
     for account in accounts:
         allocation = allocation_by_pool_id[account.pool_id]
         snapshot = latest_snapshot(participant, account)
+        correction_prefix = None
+        if snapshot is not None:
+            correction_prefix = FastCorrectionPrefix(
+                account.fact_key, config.cost_basis, config
+            )
+            correction_prefixes[account.fact_key] = correction_prefix
         displayed = (
-            _display_snapshot_data(snapshot, config)
+            _display_snapshot_data(
+                snapshot, config, correction_prefix=correction_prefix
+            )
             if snapshot is not None
             else None
         )
         source = {
+            "carry_adjustment_percent": 0.0,
+            "effective_share_percent": float(allocation.share_percent),
             "account_id": account.id,
             "external_account_id": account.external_account_id,
             "account_name": account.name,
@@ -801,10 +844,16 @@ def aggregate_recommendation(
             sources.append(source)
             continue
         source_snapshots.append(snapshot)
+        burst_cycle = cycle_for(account, snapshot.observation)
+        carry = adjustment_for(burst_cycle, participant)
+        source["carry_adjustment_percent"] = float(carry)
+        source["effective_share_percent"] = float(allocation.share_percent + carry)
         values = _pool_source_values(
             snapshot,
             config,
-            allocation.share_percent,
+            allocation.share_percent + carry,
+            correction_prefix=correction_prefix,
+            charged_before=prior_cycle_usage(burst_cycle, participant, snapshot.observation.attribution_started_at),
         )
         source["net_position_usd"] = values["point"]
         source["net_position_min_usd"] = values["lower"]
@@ -827,7 +876,9 @@ def aggregate_recommendation(
         remaining_entitlement += values["remaining_entitlement"]
         sources.append(source)
 
-    safety_factor = _pooled_safety_factor(participant, accounts, config)
+    safety_factor = _pooled_safety_factor(
+        participant, accounts, config, correction_prefixes
+    )
     recommended = (
         max(ZERO, net_point) * safety_factor
     ).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -838,22 +889,24 @@ def aggregate_recommendation(
         max(ZERO, net_upper) * safety_factor
     ).quantize(CENT, rounding=ROUND_HALF_UP)
     recommended = min(recommended_max, max(recommended_min, recommended))
+    if burst_active and complete:
+        recommended = recommended_min = recommended_max = BURST_BALANCE
     if complete:
         _allocate_contributions(
             sources,
-            net_key="net_position_usd",
+            net_key="estimated_capacity_usd" if burst_active else "net_position_usd",
             output_key="contribution_usd",
             total=recommended,
         )
         _allocate_contributions(
             sources,
-            net_key="net_position_min_usd",
+            net_key="estimated_capacity_usd" if burst_active else "net_position_min_usd",
             output_key="contribution_min_usd",
             total=recommended_min,
         )
         _allocate_contributions(
             sources,
-            net_key="net_position_max_usd",
+            net_key="estimated_capacity_usd" if burst_active else "net_position_max_usd",
             output_key="contribution_max_usd",
             total=recommended_max,
         )
@@ -916,6 +969,9 @@ def aggregate_recommendation(
         reason = "全局余额与所有已分配池的剩余权益区间差异较大"
     else:
         reason = "全局余额处于所有已分配池的合计建议区间内，无需调整"
+    if burst_active and complete:
+        reason = "临时爽蹬：本周期统一建议余额 9999，实际消耗继续记账；首个账号换周期后恢复正常建议"
+        needs_update = not applied and balance != BURST_BALANCE
 
     for source in sources:
         for key in (
@@ -935,6 +991,8 @@ def aggregate_recommendation(
                 source[key] = float(source[key])
     return (
         {
+            "temporary_burst": burst_active,
+            "temporary_burst_expires_at": burst_session.expires_at.isoformat() if burst_active else None,
             "participant_id": participant.id,
             "participant_name": participant.name,
             "pool_allocations": pool_contracts,

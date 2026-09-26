@@ -6,11 +6,13 @@ import PageShellHeader from "@/components/common/PageShellHeader.vue";
 import { ApiError, api, jsonBody } from "@/services/api";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
+import { useDateTime } from "@/composables/useDateTime";
 import type { MonitoredAccount } from "@/types/accounts";
 import type {
   QuotaAllocationData,
   QuotaAllocationParticipant,
   QuotaAllocationWrite,
+  CarryAdjustment,
 } from "@/types/participants";
 
 interface DraftPool {
@@ -42,6 +44,7 @@ const providerLabel = computed(() =>
       ? "CPA"
       : "Sub2API",
 );
+const dateTime = useDateTime();
 const loading = ref(true);
 const saving = ref(false);
 const dirty = ref(false);
@@ -50,6 +53,33 @@ const messageTone = ref<"success" | "warning" | "error">("success");
 const accounts = ref<MonitoredAccount[]>([]);
 const participants = ref<QuotaAllocationParticipant[]>([]);
 const draftPools = ref<DraftPool[]>([]);
+const carryAdjustments = ref<Array<CarryAdjustment & { draft: string }>>([]);
+const invalidCarry = computed(() =>
+  carryAdjustments.value.some((row) => {
+    const value = Number(row.draft);
+    return (
+      !row.draft.trim() ||
+      !Number.isFinite(value) ||
+      value < -100 ||
+      value > 100 ||
+      !/^[+-]?\d+(?:\.\d{1,5})?$/.test(row.draft)
+    );
+  }),
+);
+
+function carryRows(pool: DraftPool, participantId: number) {
+  return carryAdjustments.value.filter(
+    (row) =>
+      row.participant_id === participantId &&
+      pool.accountIds.includes(row.account_id),
+  );
+}
+
+function updateCarry(row: CarryAdjustment & { draft: string }, event: Event) {
+  row.draft = (event.target as HTMLInputElement).value;
+  dirty.value = true;
+  message.value = "";
+}
 const selectedAccountIds = ref<Set<number>>(new Set());
 const contextMenu = ref<ContextMenuState | null>(null);
 const renameDialog = ref<HTMLDialogElement | null>(null);
@@ -116,6 +146,10 @@ function allocationMap(
 function hydrate(data: QuotaAllocationData) {
   accounts.value = data.accounts;
   participants.value = data.participants;
+  carryAdjustments.value = data.carry_adjustments.map((row) => ({
+    ...row,
+    draft: String(Number(row.adjustment_percent)),
+  }));
   draftPools.value = data.pools.map((pool) => ({
     key: draftKey(pool.id),
     id: pool.id,
@@ -376,7 +410,13 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 async function save() {
-  if (!auth.isStaff || !dirty.value || hasInvalidPool.value) return;
+  if (
+    !auth.isStaff ||
+    !dirty.value ||
+    hasInvalidPool.value ||
+    invalidCarry.value
+  )
+    return;
   saving.value = true;
   message.value = "";
   const payload: QuotaAllocationWrite = {
@@ -392,6 +432,12 @@ async function save() {
         }))
         .filter((allocation) => allocation.share_percent > 0),
     })),
+    carry_adjustments: carryAdjustments.value
+      .filter((row) => Number(row.draft) !== Number(row.adjustment_percent))
+      .map(({ resets_at: _resetsAt, draft, ...row }) => ({
+        ...row,
+        adjustment_percent: draft,
+      })),
   };
   try {
     hydrate(
@@ -404,7 +450,7 @@ async function save() {
     message.value =
       provider.value !== "sub2api"
         ? `${provider.value === "gpt_load" ? "GPT-Load" : "CPA"} 额度池已保存，新份额从现在生效，等待下次观测更新额度。`
-        : "额度池和参与者份额已保存。现有账号观测会按新分配方案立即重算余额建议。";
+        : "合同份额与当前周期结转已保存，余额建议已更新。实际余额仍需按原方式自动或手动应用。";
   } catch (error) {
     messageTone.value = "error";
     message.value =
@@ -455,7 +501,7 @@ onUnmounted(() => {
     <button
       v-if="auth.isStaff"
       class="btn btn-primary btn-sm"
-      :disabled="!dirty || saving || hasInvalidPool"
+      :disabled="!dirty || saving || hasInvalidPool || invalidCarry"
       @click="save"
     >
       <span v-if="saving" class="loading loading-xs loading-spinner"></span>
@@ -728,29 +774,69 @@ onUnmounted(() => {
                 @click.stop
                 @contextmenu.stop.prevent
               >
-                <label
-                  class="input mx-auto flex w-28 items-center gap-1"
-                  :class="{
-                    'input-error': shareIsInvalid(pool, participant.id),
-                  }"
-                >
-                  <input
-                    :value="pool.allocations[participant.id] ?? '0'"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.001"
-                    inputmode="decimal"
-                    class="grow text-center tabular-nums"
-                    :disabled="!auth.isStaff"
-                    :aria-label="`${pool.name} 分配给 ${participant.name} 的百分比`"
-                    @input="updateAllocation(pool, participant.id, $event)"
-                    @keydown.enter.prevent="
-                      ($event.target as HTMLInputElement).blur()
-                    "
-                  />
-                  <span class="text-xs opacity-40">%</span>
-                </label>
+                <div class="flex items-center justify-center gap-3">
+                  <label
+                    class="input flex w-28 shrink-0 items-center gap-1"
+                    :class="{
+                      'input-error': shareIsInvalid(pool, participant.id),
+                    }"
+                  >
+                    <input
+                      :value="pool.allocations[participant.id] ?? '0'"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.001"
+                      inputmode="decimal"
+                      class="grow text-center tabular-nums"
+                      :disabled="!auth.isStaff"
+                      :aria-label="`${pool.name} 分配给 ${participant.name} 的百分比`"
+                      @input="updateAllocation(pool, participant.id, $event)"
+                      @keydown.enter.prevent="
+                        ($event.target as HTMLInputElement).blur()
+                      "
+                    />
+                    <span class="text-xs opacity-40">%</span>
+                  </label>
+                  <div
+                    v-if="carryRows(pool, participant.id).length"
+                    class="flex flex-col gap-2"
+                  >
+                    <label
+                      v-for="carry in carryRows(pool, participant.id)"
+                      :key="carry.cycle_id"
+                      class="flex items-center gap-2 text-sm"
+                    >
+                      <span class="flex flex-col gap-1 text-orange-500">
+                        <span class="whitespace-nowrap">结转权益</span>
+                        <span
+                          v-if="pool.accountIds.length > 1"
+                          class="max-w-24 truncate text-xs opacity-70"
+                          :title="accountName(carry.account_id)"
+                          >{{ accountName(carry.account_id) }}</span
+                        >
+                      </span>
+                      <span
+                        class="input flex w-28 items-center gap-1 border-orange-500/50 input-sm"
+                      >
+                        <input
+                          :value="carry.draft"
+                          type="number"
+                          min="-100"
+                          max="100"
+                          step="0.00001"
+                          inputmode="decimal"
+                          class="min-w-0 grow text-center tabular-nums"
+                          :disabled="!auth.isStaff || saving"
+                          :aria-label="`${accountName(carry.account_id)} ${participant.name} 的结转权益百分比`"
+                          :title="`仅当前周期，有效至 ${dateTime(carry.resets_at)}`"
+                          @input="updateCarry(carry, $event)"
+                        />
+                        <span class="text-xs opacity-50">%</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </td>
             </template>
           </tr>
@@ -762,6 +848,13 @@ onUnmounted(() => {
       class="flex flex-wrap items-center justify-between gap-3 text-xs opacity-60"
     >
       <span>每个账号必须且只能属于一个池；单账号本身就是独立池。</span>
+      <span v-if="carryAdjustments.length"
+        >结转独立于合同：正数补偿、负数扣除，填写 0
+        清除；保存后零结转输入框隐藏。手动调整不会自动修改他人的结转，且不保证总和为零。</span
+      >
+      <span v-if="invalidCarry" class="text-error"
+        >结转请输入 −100 至 100 的数字，最多 5 位小数。</span
+      >
       <span v-if="dirty" class="badge badge-sm badge-warning"
         >有未保存更改</span
       >
@@ -836,77 +929,4 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped>
-.diagonal-header::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to top right,
-    transparent calc(50% - 0.75px),
-    color-mix(in oklab, currentColor 55%, transparent) 50%,
-    transparent calc(50% + 0.75px)
-  );
-  content: "";
-  pointer-events: none;
-}
-
-.allocation-table thead th {
-  border-bottom: 2px solid
-    color-mix(in oklab, var(--color-base-content) 32%, transparent);
-}
-
-.allocation-table .allocation-cell {
-  border-left: 1px solid
-    color-mix(in oklab, var(--color-base-content) 22%, transparent);
-}
-
-.allocation-table tbody > tr > * {
-  border-bottom-color: color-mix(
-    in oklab,
-    var(--color-base-content) 22%,
-    transparent
-  );
-}
-
-.allocation-table tbody + tbody > tr:first-child > * {
-  border-top: 2px solid
-    color-mix(in oklab, var(--color-base-content) 32%, transparent);
-}
-
-.allocation-table tbody.mixed-pool .pool-first {
-  border-top: 2px solid var(--color-success);
-}
-
-.allocation-table tbody.mixed-pool .pool-last {
-  border-bottom: 2px solid var(--color-success);
-}
-
-.allocation-table tbody.mixed-pool .source-cell {
-  border-left: 2px solid var(--color-success);
-}
-
-.allocation-table tbody.mixed-pool .source-cell:not(.pool-last) {
-  border-bottom-style: dashed;
-  border-bottom-color: color-mix(
-    in oklab,
-    var(--color-success) 45%,
-    transparent
-  );
-}
-
-.allocation-table tbody.mixed-pool .pool-right {
-  border-right: 2px solid var(--color-success);
-}
-
-.allocation-table tbody.mixed-pool .allocation-cell {
-  background: color-mix(
-    in oklab,
-    var(--color-success) 5%,
-    var(--color-base-100)
-  );
-}
-
-.allocation-table tbody:not(.mixed-pool):last-child > tr:last-child > * {
-  border-bottom: 0;
-}
-</style>
+<style scoped src="./AllocationView.css"></style>

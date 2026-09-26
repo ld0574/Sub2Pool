@@ -124,6 +124,20 @@ export interface AccountCycleUsage {
   used_usd: number;
   is_current: boolean;
 }
+export type TemporaryDisableScope = "account" | "model";
+export interface TemporaryDisable {
+  id: number;
+  account_id: number;
+  scope: TemporaryDisableScope;
+  model: string;
+  started_at: string | null;
+  restore_at: string | null;
+  retry_at: string | null;
+  restored_at: string | null;
+  restore_source: "" | "manual" | "auto";
+  created_by: string;
+  last_error: string;
+}
 export interface AccountStatusAccount {
   cpa_quota?: CPAQuotaDetail;
   id: number;
@@ -138,6 +152,7 @@ export interface AccountStatusAccount {
   usage: AccountUsageStatus | null;
   stats: AccountUsageStats | null;
   warnings: string[];
+  temporary_disables: TemporaryDisable[];
 }
 export interface AccountStatusData {
   configured: boolean;

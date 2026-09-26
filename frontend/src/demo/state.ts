@@ -1,6 +1,7 @@
 import { initializeCPADemo, type DemoCPAState } from "./cpa";
 import type { PagePermission } from "@/config/pagePermissions";
-import type { MonitoredAccount } from "@/types/accounts";
+import type { TemporaryBurstData } from "@/types/temporaryBurst";
+import type { MonitoredAccount, TemporaryDisable } from "@/types/accounts";
 import type { Observation } from "@/types/observations";
 import type {
   Participant,
@@ -17,7 +18,12 @@ import type {
   NotificationRecord,
   SystemUser,
 } from "@/types/security";
-import type { AppSettingsData, HistoricalRebuildPlan } from "@/types/settings";
+import type {
+  AppSettingsData,
+  HistoricalRebuildPlan,
+  UpstreamPricingState,
+  UpstreamPricingPolicy,
+} from "@/types/settings";
 
 import { initializeState } from "./fixtures";
 
@@ -55,13 +61,14 @@ export interface DemoPeriod {
 
 export interface DemoState {
   cpa?: DemoCPAState;
-  version: 17;
+  version: 22;
   clock: string;
   nextParticipantId: number;
   nextPoolId: number;
   nextSystemUserId: number;
   nextObservationId: number;
   nextBlockedId: number;
+  nextTemporaryDisableId: number;
   revision: number;
   participants: Participant[];
   monitoredAccounts: MonitoredAccount[];
@@ -75,6 +82,10 @@ export interface DemoState {
   blockedAddresses: BlockedIPAddress[];
   announcementReads: string[];
   settings: AppSettingsData;
+  upstreamPricing: UpstreamPricingState;
+  upstreamGroupPolicies: Record<number, UpstreamPricingPolicy | null>;
+  temporaryBurst: TemporaryBurstData | null;
+  temporaryDisables: TemporaryDisable[];
   plans: HistoricalRebuildPlan[];
 }
 
@@ -83,7 +94,7 @@ export function loadDemoState(): DemoState {
   if (stored) {
     try {
       const parsed = JSON.parse(stored) as DemoState;
-      if (parsed.version === 17) {
+      if (parsed.version === 22) {
         initializeCPADemo(parsed);
         return parsed;
       }

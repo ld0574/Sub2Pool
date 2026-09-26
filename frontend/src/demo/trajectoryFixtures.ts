@@ -204,9 +204,15 @@ function buildPeriods(participants: Participant[]): {
       const excluded = observationId % 389 === 0;
       const fastCorrectionRemainder = observationId % 37;
       const fastCorrectionCalculated =
-        fastCorrectionRemainder > 5 && fastCorrectionRemainder < 31;
+        periodIndex < counts.length - 1 &&
+        fastCorrectionRemainder > 5 &&
+        fastCorrectionRemainder < 31;
       const item: Observation = {
         id: observationId,
+        correction_source:
+          periodIndex === counts.length - 1 ? "upstream" : "local",
+        pricing_epoch:
+          periodIndex === counts.length - 1 ? "upstream-v1:1:applied" : "local",
         observed_at: iso(observedAt),
         source,
         provider: "sub2api",

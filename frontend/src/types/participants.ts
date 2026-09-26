@@ -54,6 +54,8 @@ export interface AggregateRecommendationSource {
   pool_name: string;
   pool_contract_revision: number;
   contract_share_percent: number;
+  carry_adjustment_percent?: number;
+  effective_share_percent?: number;
   snapshot: Snapshot | null;
   net_position_usd: number | null;
   net_position_min_usd: number | null;
@@ -75,6 +77,8 @@ export interface ParticipantPoolAllocation {
   account_count?: number;
 }
 export interface AggregateRecommendation {
+  temporary_burst?: boolean;
+  temporary_burst_expires_at?: string | null;
   participant_id: number;
   participant_name: string;
   pool_allocations: ParticipantPoolAllocation[];
@@ -138,11 +142,21 @@ export interface QuotaPoolAllocation {
   allocations: QuotaPoolAllocationEntry[];
   total_share_percent: number;
 }
+export interface CarryAdjustment {
+  cycle_id: number;
+  account_id: number;
+  participant_id: number;
+  user_id: number;
+  resets_at: string;
+  adjustment_percent: string;
+  revision: number;
+}
 export interface QuotaAllocationData {
   provider?: "sub2api" | "cpa" | "gpt_load";
   accounts: MonitoredAccount[];
   participants: QuotaAllocationParticipant[];
   pools: QuotaPoolAllocation[];
+  carry_adjustments: CarryAdjustment[];
 }
 export interface QuotaAllocationWritePool {
   id?: number;
@@ -153,6 +167,7 @@ export interface QuotaAllocationWritePool {
 export interface QuotaAllocationWrite {
   provider?: "sub2api" | "cpa" | "gpt_load";
   pools: QuotaAllocationWritePool[];
+  carry_adjustments?: Omit<CarryAdjustment, "resets_at">[];
 }
 export interface Sub2APIUserOption {
   id: number;

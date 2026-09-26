@@ -1,4 +1,4 @@
-"""官方窗口、管理员起点与异常回退的周期边界推断。"""
+"""官方窗口、计价 epoch、管理员起点与异常回退的周期边界推断。"""
 
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -226,11 +226,11 @@ def infer_segments(
     collection_intervals: list[CPAAccountCollectionInterval] | None = None,
     collection_history: list[Observation] | None = None,
 ) -> tuple[list[ReplaySegment], list[Observation]]:
-    """按“管理员起点区间 > 官方窗口 > 异常检测”识别派生区间。
+    """按“管理员起点 > 官方窗口 > 异常检测”识别派生区间。
 
-    管理员区间从开始记录到结束记录（均包含）强制属于同一周期；区间内的
-    0% 观测、官方重置时间变化和其他起点标记都不会再次切分周期。开始与
-    结束相同时保持旧版单点起点语义。
+    同一额度周期允许不同历史计价规则。规则按观测冻结并逐区间累计，
+    不因计价切换重置成本或百分比基线。管理员起点区间仍优先保护人工
+    标记；开始与结束相同时保持单点起点语义。
 
     上游报告的 ``reset_at`` 显著向后推进时，首个 0% 观测建立新官方周期的
     固定基线；后续连续 0% 全部延续该周期并保留累计成本增量。首次使用

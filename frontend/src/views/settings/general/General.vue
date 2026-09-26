@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/auth";
 import type { ConfirmDialogHandle, ConfirmDialogOptions } from "@/types/common";
 
 import AllocationModelCard from "./components/AllocationModelCard.vue";
+import AutoApplyRecommendationsCard from "./components/AutoApplyRecommendationsCard.vue";
 import DatabaseTransferCard from "./components/DatabaseTransferCard.vue";
 import CPAConnectionCard from "./components/CPAConnectionCard.vue";
 import GPTLoadConnectionCard from "./components/GPTLoadConnectionCard.vue";
@@ -70,8 +71,11 @@ const {
   saveCPAPricing,
   saveAllocation,
   saveSampling,
+  saveAutoApplyRecommendations,
   saveEmail,
-  saveBillingCorrection,
+  upstreamPricing,
+  applyUpstreamPricing,
+  revertUpstreamPricing,
   saveNotifications,
   exportDatabase,
   importDatabase,
@@ -227,15 +231,23 @@ async function handleRevokeReadOnlyAPIKey() {
       @save="saveAllocation"
     />
     <BillingCorrectionCard
-      v-model:settings="settings"
+      v-if="upstreamPricing"
+      :state="upstreamPricing"
+      :demo="demoMode"
       :saving="saving === 'billing-correction'"
-      :save="saveBillingCorrection"
+      :apply-policy="applyUpstreamPricing"
+      :revert-policy="revertUpstreamPricing"
     />
     <ResearchCard :demo="demoMode" />
     <SamplingStrategyCard
       v-model:settings="settings"
       :saving="saving === 'sampling'"
       @save="saveSampling"
+    />
+    <AutoApplyRecommendationsCard
+      v-model:settings="settings"
+      :saving="saving === 'auto-apply-recommendations'"
+      @save="saveAutoApplyRecommendations"
     />
     <EmailServiceCard
       v-model:settings="settings"

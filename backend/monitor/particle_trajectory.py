@@ -158,7 +158,12 @@ def _segment_for_period(
         ),
         percent_baseline=(
             first.upstream_used_percent
-            if reason in {"manual_override", "provider_collection_baseline", "provider_quota_adjustment"}
+            if reason
+            in {
+                "manual_override",
+                "provider_collection_baseline",
+                "provider_quota_adjustment",
+            }
             else ZERO
         ),
     )

@@ -7,10 +7,6 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
-from ..billing_correction.rules import (
-    normalize_long_context_correction_rules, normalize_model_correction_rules,
-)
-from ..fast_correction.rules import normalize_fast_correction_rules
 from ..fast_correction.status import missing_current_cycle_intervals
 from ..models import (
     AppSettings,
@@ -103,16 +99,11 @@ SETTINGS_FIELDS = (
     "timezone",
     "cost_basis",
     "weekly_quota_model",
-    "fast_correction_enabled",
-    "fast_correction_rules",
-    "long_context_correction_enabled",
-    "long_context_correction_rules",
-    "model_correction_enabled",
-    "model_correction_rules",
     "initial_usd_per_percent",
     "safety_factor",
     "daily_estimate_min_percent_span",
     "local_poll_minutes",
+    "auto_apply_recommendations",
     "progress_threshold_percent",
     "active_max_calibration_hours",
     "reset_proximity_minutes",
@@ -484,23 +475,6 @@ class AppSettingsSerializer(serializers.ModelSerializer):
     def get_fast_correction_missing_intervals(self, obj) -> int:
         return self._fast_missing_count(obj)
 
-    def validate_long_context_correction_rules(self, value):
-        try:
-            return normalize_long_context_correction_rules(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
-
-    def validate_model_correction_rules(self, value):
-        try:
-            return normalize_model_correction_rules(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
-
-    def validate_fast_correction_rules(self, value):
-        try:
-            return normalize_fast_correction_rules(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
     def validate_cpa_model_pricing(self, value):
         try:
             return validate_cpa_model_pricing(value)

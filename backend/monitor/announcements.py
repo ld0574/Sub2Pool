@@ -12,32 +12,24 @@ class SystemAnnouncement:
 
 ANNOUNCEMENTS = (
     SystemAnnouncement(
-        code="sub2api-long-context-correction-2026-09",
-        title="长上下文双倍倍率修正默认启用",
-        published_at="2026-09-05T00:00:00Z",
+        code="sub2api-upstream-pricing-2026-09-08",
+        title="计费倍率改由 Sub2API 统一配置",
+        published_at="2026-09-08T00:00:00Z",
         severity="info",
         paragraphs=(
-            '根据科学的测算研究，发现在 OpenAI 订阅中，5.6 以及 6 系列的模型并没有双倍倍率。因此，默认为您打开了双倍倍率修正为 1。如果你在 sub2API 手动设置了双倍倍率已经为 1,那么可以前往系统设置页面，“双倍倍率修正”选项那里，将 Sub2API 双倍倍率改写成 1。在默认情况下，您不需要进行任何操作',
+            "推荐点击“一键应用修正”，选择要应用的 Sub2API OpenAI 分组并确认：GPT-6 系列 FAST 2 倍、其他模型 FAST 2.5 倍、gpt-6* 模型 1.8 倍、关闭长上下文阶梯计费，影响所选组内所有用户。取消不执行；确认请求被接受后，一键应用入口永久消失，失败或部分成功可在设置页核对并重试。",
+            "升级前的本地修正规则已冻结并继续用于旧记录重放。新记录只使用上游原始成本，不再叠加本地修正；仅确认上游配置成功的记录显示“已修正”。计费状态改变时会自动建立新的测算区间。",
+            "撤回会恢复本服务接管前的上游计费字段，不会修改旧请求、不重新开启本地修正，也不会再次自动应用。若上游字段已被其他人修改，系统会拒绝覆盖并说明冲突。",
         ),
     ),
     SystemAnnouncement(
-        code="sub2api-gpt6-model-correction-2026-09",
-        title="GPT-6 系列默认计费倍率设为 1.8",
-        published_at="2026-09-05T00:00:00Z",
+        code="auto-apply-recommendations-default-2026-09-08",
+        title="自动应用建议额度默认开启",
+        published_at="2026-09-08T00:00:00Z",
         severity="info",
         paragraphs=(
-            '根据这两篇帖子的相关研究：https://linux.do/t/topic/2861126 和https://linux.do/t/topic/2860543 ，目前已将 GPT-6 系列的默认计费倍率设置成了 1.8。如果您在 sub2API 中已经关闭了长上下文阶梯计费，还请您前往系统设置的模型计费倍率设置项中，将计费倍率改成 1。 在默认情况下，您不需要进行任何操作',
-        ),
-    ),
-    SystemAnnouncement(
-        code="sub2api-fast-model-correction-0-1-179",
-        title="Sub2API 0.1.179 FAST 计费调整",
-        published_at="2026-08-20T00:00:00Z",
-        severity="warning",
-        paragraphs=(
-            "Sub2API 0.1.179 起支持在渠道模型定价规则中配置 FAST 倍率，但目前没有统一配置入口，需要针对各模型规则分别设置。建议优先在 Sub2API 中将需要的模型 FAST 倍率配置为 2.5。",
-            "系统设置新增了更详细的 FAST 模型修正功能，支持模型通配符和从上到下的优先匹配。默认会把所有模型的 2 倍 FAST 成本修正为 2.5 倍。",
-            "如果某个模型已在 Sub2API 中配置为 2.5 倍，可以在系统设置中为该模型添加 2.5 倍到 2.5 倍的规则，避免重复修正。历史 FAST 修正事实不受影响。",
+            "因为现在额度测算较为完善，所以默认为您打开“自动应用建议额度”。如不需要，请在系统设置里面关闭。",
+            "如果您之前关闭了此功能，可点击“一键开启”。开启后按监控流程自动应用符合条件的额度建议；仍可随时在设置页关闭。",
         ),
     ),
 )

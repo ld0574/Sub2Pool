@@ -8,9 +8,10 @@ from django.shortcuts import get_object_or_404
 from .base import AdminAPIView, PageAccessAPIView, error, ok
 from ..api_auth import APIKeyAuthentication
 from ..access import visible_accounts_for, visible_participant_ids
-from ..billing_correction.domain import BillingCorrectionRules
 from ..billing_correction.observations import interval_corrections
-from ..billing_correction.rules import CORRECTION_SETTINGS, corrections_digest
+from ..billing_correction.rules import (
+    CORRECTION_SETTINGS, corrections_digest, observation_correction_config,
+)
 from ..fast_correction.repair import calculate_missing_fast_correction
 from ..integrations.sub2api import Sub2APIError
 from ..reporting import iso, snapshot_data
@@ -86,14 +87,15 @@ class ObservationListView(PageAccessAPIView):
         passive_count = queryset.filter(raw_window__query_mode="passive").count()
         rows, pagination = paginated_rows(request, queryset)
         result = []
-        rules = BillingCorrectionRules(config)
         for item in rows:
-            correction = interval_corrections(item, config, rules=rules)
+            correction = interval_corrections(item, config)
             result.append(
                 {
                     "id": item.id,
                     "observed_at": iso(item.observed_at),
                     "source": item.source,
+                    "correction_source": item.correction_source,
+                    "pricing_epoch": item.pricing_epoch,
                     "provider": item.raw_window.get("provider", "sub2api"),
                     "account_id": item.account_id,
                     "attribution_started_at": iso(item.attribution_started_at),
@@ -202,13 +204,6 @@ class ObservationListView(PageAccessAPIView):
                 ),
                 "items": result,
                 "corrections_available": account is None or account.provider == "sub2api",
-                "fast_correction_enabled": bool(
-                    account is None
-                    or (
-                        account.provider == "sub2api"
-                        and config.fast_correction_enabled
-                    )
-                ),
                 "pagination": pagination,
                 "summary": {
                     "total": total,
@@ -228,7 +223,7 @@ class ReadOnlyObservationListView(ObservationListView):
 
 
 class ObservationFastCorrectionDetailView(PageAccessAPIView):
-    """展示当前规则从原始事实计算的三项修正；旧 FAST-only 记录明确标识。"""
+    """展示冻结的旧本地修正，或已确认的上游计费来源。"""
 
     required_page_permissions = (PagePermission.OBSERVATIONS,)
 
@@ -250,6 +245,17 @@ class ObservationFastCorrectionDetailView(PageAccessAPIView):
                 else "CPA"
             )
             return error(f"{label} 观测不使用 Sub2API 修正明细", 400)
+        if observation.correction_source != "local":
+            return ok({
+                "observation_id": observation.id,
+                "correction_source": observation.correction_source,
+                "pricing_epoch": observation.pricing_epoch,
+                "message": (
+                    "上游 Sub2API 已修正"
+                    if observation.correction_source == "upstream"
+                    else "此记录未确认上游计费配置成功，且不进行本地修正。"
+                ),
+            })
         correction = interval_corrections(observation, config, include_models=True)
         visible_ids = visible_participant_ids(request.user)
         participant_queryset = Participant.objects.filter(sub2api_user_id__in=correction.users)
@@ -284,8 +290,11 @@ class ObservationFastCorrectionDetailView(PageAccessAPIView):
         fast_count = sum(row.fast_request_count for row in rows)
         fast_raw_cost = sum((row.fast_raw_cost for row in rows), Decimal("0"))
         capture = getattr(observation, "billing_capture", None)
+        frozen_config = observation_correction_config(observation)
         return ok({
             "observation_id": observation.id,
+            "correction_source": observation.correction_source,
+            "pricing_epoch": observation.pricing_epoch,
             "started_at": iso(capture.started_at if capture else observation.fast_correction_started_at),
             "ended_at": iso(observation.observed_at), "calculated": correction.calculated,
             "cost_basis": config.cost_basis,
@@ -300,8 +309,8 @@ class ObservationFastCorrectionDetailView(PageAccessAPIView):
             "collection_error": str(observation.raw_window.get("fast_correction_error") or "") if not correction.facts_complete else "",
             "users": users, "model_details": correction.model_details,
             "calculation_order": ["fast", "long_context", "model"],
-            "rules_digest": corrections_digest(config),
-            "rules": {name: getattr(config, name) for name in sorted(CORRECTION_SETTINGS)},
+            "rules_digest": corrections_digest(frozen_config),
+            "rules": {name: getattr(frozen_config, name) for name in sorted(CORRECTION_SETTINGS)},
             **correction.payload(),
         })
 
@@ -324,6 +333,8 @@ class ObservationFastCorrectionCalculateView(AdminAPIView):
         if account is not None and account.provider in {"cpa", "gpt_load"}:
             label = "GPT-Load" if account.provider == "gpt_load" else "CPA"
             return error(f"{label} 请求成本已在采集时计价", 400)
+        if observation.correction_source != "local":
+            return error("新观测不进行本地修正，不能补算历史本地规则。", 400)
         try:
             result = calculate_missing_fast_correction(observation, config)
         except ValueError as exc:

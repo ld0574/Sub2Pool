@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views.announcements import AnnouncementListView, AnnouncementReadView
+from .views.temporary_burst import TemporaryBurstView
 from .views.auth import (
     LoginView,
     LogoutView,
@@ -86,6 +87,16 @@ from .views.users import (
 
 from .views.research import ResearchSettingsView, ResearchRunView
 from .views.cpa_pricing import CPAPricingView
+from .views.temporary_disable import (
+    TemporaryDisableDetailView,
+    TemporaryDisableModelListView,
+    TemporaryDisableView,
+)
+from .views.upstream_pricing import (
+    UpstreamPricingView,
+    UpstreamPricingApplyView,
+    UpstreamPricingRevertView,
+)
 
 urlpatterns = [
     path("settings/cpa-pricing", CPAPricingView.as_view()),
@@ -110,7 +121,20 @@ urlpatterns = [
     path("dashboard", DashboardView.as_view()),
     path("account-status/cpa/<int:account_id>/reset-preview", CPAQuotaResetPreviewView.as_view()),
     path("account-status/cpa/<int:account_id>/resets/<uuid:plan_id>/confirm", CPAQuotaResetConfirmView.as_view()),
+    path("dashboard/temporary-burst", TemporaryBurstView.as_view()),
     path("account-status", AccountStatusView.as_view()),
+    path(
+        "accounts/<int:account_id>/models",
+        TemporaryDisableModelListView.as_view(),
+    ),
+    path(
+        "accounts/<int:account_id>/temporary-disables",
+        TemporaryDisableView.as_view(),
+    ),
+    path(
+        "accounts/temporary-disables/<int:disable_id>",
+        TemporaryDisableDetailView.as_view(),
+    ),
     path(
         "dashboard/participants/<int:participant_id>/apply-recommendation",
         ApplyParticipantRecommendationView.as_view(),
@@ -180,6 +204,9 @@ urlpatterns = [
     path("particle-trajectory", ParticleTrajectoryView.as_view()),
     path("notifications", NotificationListView.as_view()),
     path("settings", SettingsView.as_view()),
+    path("settings/upstream-pricing", UpstreamPricingView.as_view()),
+    path("settings/upstream-pricing/apply", UpstreamPricingApplyView.as_view()),
+    path("settings/upstream-pricing/revert", UpstreamPricingRevertView.as_view()),
     path("settings/openai-accounts", OpenAIAccountListView.as_view()),
     path("settings/cpa-accounts", CPAAccountListView.as_view()),
     path("settings/gpt-load-accounts", GPTLoadAccountListView.as_view()),

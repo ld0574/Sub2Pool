@@ -16,6 +16,7 @@ import CycleRateBasisDialog from "./components/CycleRateBasisDialog.vue";
 import DashboardStats from "./components/DashboardStats.vue";
 import RecommendationActionDialog from "./components/RecommendationActionDialog.vue";
 import RecommendationList from "./components/RecommendationList.vue";
+import TemporaryBurstCard from "./components/TemporaryBurstCard.vue";
 
 interface DialogHandle {
   open: (...args: never[]) => void;
@@ -43,6 +44,7 @@ const appliedParticipantIds = ref<number[]>([]);
 const actionToast = ref("");
 const rateBasisDialog = ref<DialogHandle | null>(null);
 const actionDialog = ref<RecommendationDialogHandle | null>(null);
+const burstCard = ref<InstanceType<typeof TemporaryBurstCard> | null>(null);
 const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
 
 async function load() {
@@ -71,6 +73,7 @@ async function runCalibration() {
       body: JSON.stringify({ account_id: selectedAccountId.value }),
     });
     await load();
+    await burstCard.value?.refresh();
   } catch (error) {
     message.value = error instanceof ApiError ? error.message : "测算失败";
   } finally {
@@ -229,6 +232,11 @@ onMounted(load);
     :provider="data.selected_provider === 'gpt_load' ? 'gpt_load' : 'cpa'"
     :loading="loading"
     @refresh="load"
+  />
+  <TemporaryBurstCard
+    v-if="auth.isStaff && data?.selected_provider === 'sub2api'"
+    ref="burstCard"
+    @changed="load"
   />
   <CollectionStatusCard v-if="data" :data="data" />
   <AccountExplanationCard v-if="data" :data="data" />
