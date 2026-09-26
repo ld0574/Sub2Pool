@@ -46,7 +46,6 @@ def cpa_schemas():
     time = {"type": "string", "format": "date-time"}
     totals = {
         "usage_usd": number,
-        "estimated_unlogged_usd": number,
         "request_count": integer,
         "token_count": integer,
         "unpriced_request_count": integer,
@@ -67,7 +66,6 @@ def cpa_schemas():
             "charged_percent": nullable_number,
             "remaining_share_percent": nullable_number,
             "usage_usd": number,
-            "estimated_unlogged_usd": number,
             "estimated_capacity_usd": nullable_number,
             "expected_entitlement_usd": nullable_number,
             "consumed_entitlement_usd": nullable_number,
@@ -79,7 +77,6 @@ def cpa_schemas():
         {
             "participant_id": integer,
             "usage_usd": number,
-            "estimated_unlogged_usd": number,
             **{
                 key: nullable_number
                 for key in (
@@ -130,12 +127,7 @@ def cpa_schemas():
             },
             **{
                 key: number
-                for key in (
-                    "usage_usd",
-                    "estimated_unlogged_usd",
-                    "unattributed_usd",
-                    "other_members_usd",
-                )
+                for key in ("usage_usd", "unattributed_usd", "other_members_usd")
             },
             "reasons": _array(text),
             "cycles": _array(cycle),
@@ -162,12 +154,7 @@ def cpa_schemas():
             },
             **{
                 key: number
-                for key in (
-                    "usage_usd",
-                    "estimated_unlogged_usd",
-                    "unattributed_usd",
-                    "other_members_usd",
-                )
+                for key in ("usage_usd", "unattributed_usd", "other_members_usd")
             },
             "unpriced_request_count": integer,
             "members": _array(
@@ -175,7 +162,6 @@ def cpa_schemas():
                     {
                         "participant_id": integer,
                         "usage_usd": number,
-                        "estimated_unlogged_usd": number,
                         "usage_percent": nullable_number,
                     }
                 )

@@ -50,16 +50,6 @@ const used = computed(
     breakdown.value?.usage_usd ??
     props.member.usage_usd,
 );
-const estimatedUnlogged = computed(
-  () =>
-    week.value?.members.find(
-      (m) => m.participant_id === props.member.participant_id,
-    )?.estimated_unlogged_usd ??
-    breakdown.value?.estimated_unlogged_usd ??
-    props.billing?.estimated_unlogged_usd ??
-    props.member.estimated_unlogged_usd ??
-    0,
-);
 const budgetDelta = computed(() =>
   budget.value == null ? null : budget.value - used.value,
 );
@@ -138,11 +128,6 @@ const compactTokens = computed(() =>
             >{{ compactTokens }} Token</span
           >
         </p>
-        <p v-if="estimatedUnlogged > 0" class="mt-2 text-xs text-warning">
-          其中
-          {{ formatCurrency(estimatedUnlogged) }}
-          为官方用量与请求日志差额的车主估算，未生成请求明细。
-        </p>
       </div>
       <dl class="grid grid-cols-2 gap-3">
         <div>
@@ -176,12 +161,11 @@ const compactTokens = computed(() =>
           :aria-label="`${member.participant_name}已用个人预算 ${progress.toFixed(1)}%`"
         />
         <p class="text-xs text-base-content/60">
-          已计费用量 / 个人预算 {{ progress.toFixed(1) }}%
+          已采集用量 / 个人预算 {{ progress.toFixed(1) }}%
         </p>
       </div>
       <p v-if="upstreamExhausted" class="text-xs text-base-content/70">
-        当前可用按上游余额显示为
-        0；个人进度会包含已能按车主估算的日志外用量，仍无法解释的采集缺口不会虚构请求。
+        当前可用按上游余额显示为 0；个人进度不包含无法归属的漏采消耗。
       </p>
       <section v-if="billing" class="space-y-3 border-t border-base-300 pt-4">
         <div class="flex flex-wrap items-center justify-between gap-2">

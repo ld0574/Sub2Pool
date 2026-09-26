@@ -155,7 +155,7 @@ const monthlySegments = computed(() => [
           }}%。暂不判定超额，以上游周限为准；待缺价请求补齐或后续有效观测后重新校准。
         </p>
         <p v-if="weeklyExhausted(week)" class="text-sm text-warning">
-          上游本周额度已耗尽。模型容量与请求日志之间可由完整官方观测推断的差额会计入车主估算，不再视为可用余额；采集缺口或估值误差仍可能造成图表留白。
+          上游本周额度已耗尽。模型容量与已采集费用之间的差额不再视为可用余额；采集缺口或估值误差仍可能造成图表留白。
         </p>
         <p
           v-if="
@@ -166,10 +166,10 @@ const monthlySegments = computed(() => [
           "
           class="text-xs text-base-content/60"
         >
-          估算剩余＝整车估算容量－已计费用量。日志外车主估算已计入成员用量；仍无法判断的漏采或未定价请求不会强行分配，实际上游剩余比例见下方。
+          估算剩余＝整车估算容量－已采集费用。漏采或未定价请求尚未扣除，实际上游剩余比例见下方。
         </p>
         <CPADistributionBar
-          label="成员已计费用量 / 估算剩余"
+          label="成员已采集消耗 / 估算剩余"
           percent-basis="本周额度"
           :capacity="comparableWeeklyCapacity(week)"
           :show-empty-track="!weeklyExhausted(week)"
@@ -243,7 +243,7 @@ const monthlySegments = computed(() => [
               }}</strong>
             </div>
             <div>
-              <p class="text-xs text-base-content/60">累计已计费</p>
+              <p class="text-xs text-base-content/60">累计已采集</p>
               <strong class="text-2xl">{{ money(billing.usage_usd) }}</strong>
             </div>
             <div>
@@ -286,14 +286,6 @@ const monthlySegments = computed(() => [
             {{
               money(billing.unallocated_usd)
             }}。个人预计剩余权益用于跨周协调；已失效额度无法在下周恢复，建议不会修改份额或限制调用。
-          </p>
-          <p
-            v-if="(billing.estimated_unlogged_usd ?? 0) > 0"
-            class="text-sm text-warning"
-          >
-            账期累计中包含
-            {{ money(billing.estimated_unlogged_usd) }}
-            的官方额度与请求日志差额车主估算，未生成请求明细。
           </p>
           <p v-if="billing.reasons.length" class="alert text-sm" role="status">
             结算待补全：{{

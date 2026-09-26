@@ -10,7 +10,6 @@ import type { CPACollectorStatus } from "./settings";
 
 export interface CPATotals {
   usage_usd: number;
-  estimated_unlogged_usd?: number;
   request_count: number;
   token_count: number;
   unpriced_request_count: number;
@@ -39,7 +38,6 @@ export interface CPAMember extends CPATotals {
     charged_percent: number | null;
     remaining_share_percent: number | null;
     usage_usd: number;
-    estimated_unlogged_usd?: number;
     estimated_capacity_usd: number | null;
     expected_entitlement_usd: number | null;
     consumed_entitlement_usd: number | null;
@@ -49,7 +47,6 @@ export interface CPAMember extends CPATotals {
 export interface CPABillingMember {
   participant_id: number;
   usage_usd: number;
-  estimated_unlogged_usd?: number;
   usage_percent: number | null;
   entitlement_usd: number | null;
   remaining_usd: number | null;
@@ -71,14 +68,12 @@ export interface CPAWeeklyDistribution {
   remaining_usd: number | null;
   upstream_remaining_percent: number | null;
   usage_usd: number;
-  estimated_unlogged_usd?: number;
   unpriced_request_count: number;
   unattributed_usd: number;
   other_members_usd: number;
   members: {
     participant_id: number;
     usage_usd: number;
-    estimated_unlogged_usd?: number;
     usage_percent: number | null;
   }[];
 }
@@ -95,7 +90,6 @@ export interface CPABillingSummary {
   expired_usd: number | null;
   available_usd: number | null;
   usage_usd: number;
-  estimated_unlogged_usd?: number;
   unattributed_usd: number;
   other_members_usd: number;
   unallocated_usd: number | null;

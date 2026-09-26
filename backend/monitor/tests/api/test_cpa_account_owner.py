@@ -12,7 +12,6 @@ from monitor.cpa.account_owner import (
     preview_unassigned_claim,
     account_owner_data,
 )
-from monitor.cpa.billing import weekly_distribution
 from monitor.cpa.participants import (
     apply_claim,
     event_owner,
@@ -109,44 +108,6 @@ def test_role_is_account_scoped_key_priority_and_read_permissions(setup):
         ).status_code
         == 403
     )
-
-
-def test_owner_gets_continuous_unlogged_upstream_residual(setup):
-    config, admin, account, alice, bob, keys, start = setup
-    designate(alice, account, start)
-    from monitor.models import CPAAccountCollectionInterval
-
-    CPAAccountCollectionInterval.objects.create(
-        account=account,
-        session_key="owner-residual",
-        connected_at=start,
-    )
-    observation(account, start, start, 0, 0)
-    event(account, keys[1], start + timedelta(minutes=10))
-    latest = observation(account, start, start + timedelta(hours=1), 20, 10)
-    latest.attribution_started_at = start
-    latest.interval_used_percent = 20
-    latest.valid_sample = True
-    latest.model_diagnostics = {"algorithm": "particle_filter_test"}
-    latest.capacity_lower_usd = 900
-    latest.capacity_upper_usd = 1100
-    latest.effective_usd_per_percent = 10
-    latest.save()
-
-    week = weekly_distribution(
-        [account],
-        {alice.id: alice, bob.id: bob},
-        config,
-        latest.observed_at,
-        owner_index(),
-    )[0]
-    members = {row["participant_id"]: row for row in week["members"]}
-
-    assert week["usage_usd"] == 200
-    assert week["estimated_unlogged_usd"] == 190
-    assert members[alice.id]["usage_usd"] == 190
-    assert members[alice.id]["estimated_unlogged_usd"] == 190
-    assert members[bob.id]["usage_usd"] == 10
 
 
 @pytest.mark.parametrize("model", ["constant_average", "time_varying"])
