@@ -240,6 +240,9 @@ export function demoCPASummary(
         };
   const sum = (events: DemoCPAState["events"]) => ({
     usage_usd: events.reduce((total, e) => total + e.usage_usd, 0),
+    request_usage_usd: events.reduce((total, e) => total + e.usage_usd, 0),
+    manual_adjustment_usd: 0,
+    held_unexplained_usd: 0,
     request_count: events.length,
     token_count: events.reduce((total, e) => total + e.total_tokens, 0),
     unpriced_request_count: events.filter((e) => e.unpriced).length,
@@ -280,6 +283,9 @@ export function demoCPASummary(
               ? Math.max(0, remaining / 20)
               : null,
             usage_usd: totals.usage_usd,
+            request_usage_usd: totals.request_usage_usd,
+            manual_adjustment_usd: totals.manual_adjustment_usd,
+            held_unexplained_usd: totals.held_unexplained_usd,
             estimated_capacity_usd: quotaAvailable ? 2000 : null,
             expected_entitlement_usd: quotaAvailable ? expected : null,
             consumed_entitlement_usd: quotaAvailable ? totals.usage_usd : null,
@@ -318,6 +324,10 @@ export function demoCPASummary(
           : null,
         upstream_remaining_percent: 72,
         usage_usd: sum(events).usage_usd,
+        request_usage_usd: sum(events).request_usage_usd,
+        manual_adjustment_usd: 0,
+        held_unexplained_usd: 0,
+        quota_discrepancy: null,
         unpriced_request_count: sum(events).unpriced_request_count,
         unattributed_usd: sum(events.filter((e) => e.participant_id == null))
           .usage_usd,
@@ -325,6 +335,9 @@ export function demoCPASummary(
         members: members.map((m) => ({
           participant_id: m.participant_id,
           usage_usd: m.usage_usd,
+          request_usage_usd: m.request_usage_usd,
+          manual_adjustment_usd: m.manual_adjustment_usd,
+          held_unexplained_usd: m.held_unexplained_usd,
           usage_percent: m.usage_usd / 20,
         })),
       },
@@ -354,6 +367,7 @@ export function demoCPASummary(
         quota_unavailable_reasons: quotaAvailable
           ? []
           : ["本周期存在未定价请求"],
+        quota_discrepancy: null,
       },
     ],
     unattributed: sum(events.filter((e) => e.participant_id == null)),
@@ -395,6 +409,9 @@ function demoBilling(
     expired_usd: null,
     available_usd: null,
     usage_usd: 0,
+    request_usage_usd: 0,
+    manual_adjustment_usd: 0,
+    held_unexplained_usd: 0,
     unattributed_usd: 0,
     other_members_usd: 0,
     unallocated_usd: null,
@@ -414,6 +431,7 @@ function demoBilling(
   result.available_usd = 3000;
   result.expired_usd = 0;
   result.usage_usd = 1000;
+  result.request_usage_usd = 1000;
   result.unallocated_usd = 0;
   result.cycles = Array.from({ length: 4 }, (_, i) => ({
     account_id: accountId,
@@ -434,6 +452,9 @@ function demoBilling(
     return {
       participant_id: m.participant_id,
       usage_usd: spend,
+      request_usage_usd: spend,
+      manual_adjustment_usd: 0,
+      held_unexplained_usd: 0,
       usage_percent: spend / 40,
       entitlement_usd: entitlement,
       remaining_usd: remaining,
@@ -731,6 +752,9 @@ export function handleCPA({
           request_count: events.length,
           token_count: events.reduce((sum, e) => sum + e.total_tokens, 0),
           usage_usd: events.reduce((sum, e) => sum + e.usage_usd, 0),
+          request_usage_usd: events.reduce((sum, e) => sum + e.usage_usd, 0),
+          manual_adjustment_usd: 0,
+          held_unexplained_usd: 0,
           unpriced_request_count: events.filter((e) => e.unpriced).length,
           coverage: summary!.accounts[0]!.coverage,
         },
@@ -842,6 +866,9 @@ export function handleCPA({
           account_id: 3,
           account_name: "CPA 拼车账号",
           usage_usd: events.reduce((v, e) => v + e.usage_usd, 0),
+          request_usage_usd: events.reduce((v, e) => v + e.usage_usd, 0),
+          manual_adjustment_usd: 0,
+          held_unexplained_usd: 0,
           request_count: events.length,
           token_count: events.reduce((v, e) => v + e.total_tokens, 0),
           unpriced_request_count: 0,

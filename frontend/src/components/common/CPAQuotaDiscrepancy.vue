@@ -173,10 +173,11 @@ async function reverse(id: string) {
       v-if="(account.quota_discrepancy?.held_unexplained_usd ?? 0) > 0"
       class="mt-1 text-xs text-warning"
     >
-      其中 {{ formatCurrency(account.quota_discrepancy.held_unexplained_usd) }}
+      其中
+      {{ formatCurrency(account.quota_discrepancy?.held_unexplained_usd ?? 0) }}
       暂时冻结，不计入任何成员用量。按历史份额分配后，
       {{
-        formatCurrency(account.quota_discrepancy.unallocated_hold_usd)
+        formatCurrency(account.quota_discrepancy?.unallocated_hold_usd ?? 0)
       }}保留在账号级。
     </p>
     <p
