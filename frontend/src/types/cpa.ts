@@ -8,8 +8,44 @@ export interface CPACapacityEstimate {
 }
 import type { CPACollectorStatus } from "./settings";
 
+export interface CPAQuotaDiscrepancy {
+  account_id: number;
+  cycle_started_at: string;
+  cycle_ended_at: string;
+  baseline_observed_at: string;
+  observed_through: string;
+  official_delta_percent: number;
+  request_usage_usd: number;
+  suggested_usd: number;
+  lower_usd: number;
+  upper_usd: number;
+  manual_adjustment_usd: number;
+  remaining_suggested_usd: number;
+  remaining_lower_usd: number;
+  remaining_upper_usd: number;
+  held_unexplained_usd: number;
+  materiality_usd: number;
+  can_attribute: boolean;
+  status: string;
+  reasons: string[];
+  over_attributed: boolean;
+  unallocated_hold_usd: number;
+}
+
+export interface CPAQuotaDiscrepancyAudit extends CPAQuotaDiscrepancy {
+  baseline_observation_id: number;
+  capacity_observation_id: number | null;
+  latest_observation_id: number;
+  member_adjustments: Record<string, number>;
+  member_holds: Record<string, number>;
+  eligible_participant_ids: number[];
+}
+
 export interface CPATotals {
   usage_usd: number;
+  request_usage_usd: number;
+  manual_adjustment_usd: number;
+  held_unexplained_usd: number;
   request_count: number;
   token_count: number;
   unpriced_request_count: number;
@@ -38,6 +74,9 @@ export interface CPAMember extends CPATotals {
     charged_percent: number | null;
     remaining_share_percent: number | null;
     usage_usd: number;
+    request_usage_usd: number;
+    manual_adjustment_usd: number;
+    held_unexplained_usd: number;
     estimated_capacity_usd: number | null;
     expected_entitlement_usd: number | null;
     consumed_entitlement_usd: number | null;
@@ -47,6 +86,9 @@ export interface CPAMember extends CPATotals {
 export interface CPABillingMember {
   participant_id: number;
   usage_usd: number;
+  request_usage_usd: number;
+  manual_adjustment_usd: number;
+  held_unexplained_usd: number;
   usage_percent: number | null;
   entitlement_usd: number | null;
   remaining_usd: number | null;
@@ -68,12 +110,19 @@ export interface CPAWeeklyDistribution {
   remaining_usd: number | null;
   upstream_remaining_percent: number | null;
   usage_usd: number;
+  request_usage_usd: number;
+  manual_adjustment_usd: number;
+  held_unexplained_usd: number;
+  quota_discrepancy: CPAQuotaDiscrepancy | null;
   unpriced_request_count: number;
   unattributed_usd: number;
   other_members_usd: number;
   members: {
     participant_id: number;
     usage_usd: number;
+    request_usage_usd: number;
+    manual_adjustment_usd: number;
+    held_unexplained_usd: number;
     usage_percent: number | null;
   }[];
 }
@@ -90,6 +139,9 @@ export interface CPABillingSummary {
   expired_usd: number | null;
   available_usd: number | null;
   usage_usd: number;
+  request_usage_usd: number;
+  manual_adjustment_usd: number;
+  held_unexplained_usd: number;
   unattributed_usd: number;
   other_members_usd: number;
   unallocated_usd: number | null;
@@ -134,6 +186,7 @@ export interface CPAPoolSummary {
     coverage: CPACoverage;
     quota_available: boolean;
     quota_unavailable_reasons: string[];
+    quota_discrepancy: CPAQuotaDiscrepancy | null;
   })[];
   members: CPAMember[];
   unattributed: CPATotals;
@@ -177,6 +230,41 @@ export interface CPAClaim {
     account_name: string;
     coverage: CPACoverage;
   })[];
+}
+
+export interface CPAQuotaAdjustment {
+  id: string;
+  account_id: number;
+  participant_id: number;
+  participant_name: string;
+  baseline_observation_id: number;
+  latest_observation_id: number;
+  cycle_started_at: string;
+  cycle_ended_at: string;
+  effective_at: string;
+  amount_usd: number;
+  reason: string;
+  reversal_of: string | null;
+  created_at: string;
+  created_by: number | null;
+  created_by_name: string | null;
+  reversed: boolean;
+}
+
+export interface CPAQuotaDiscrepancyAdmin {
+  cycles: CPAQuotaDiscrepancyAudit[];
+  adjustments: CPAQuotaAdjustment[];
+  participants: { id: number; name: string }[];
+}
+
+export interface CPAQuotaAdjustmentPlan extends CPAQuotaDiscrepancyAudit {
+  id: string;
+  participant_id: number;
+  participant_name: string;
+  amount_usd: number;
+  reason: string;
+  expires_at: string;
+  applied_at: string | null;
 }
 export interface CPARequest {
   id: number;

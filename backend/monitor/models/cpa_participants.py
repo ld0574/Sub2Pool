@@ -122,6 +122,91 @@ class CPAClaimEvent(models.Model):
     )
 
 
+class CPAQuotaAdjustmentPlan(models.Model):
+    """Short-lived, evidence-bound preview for a manual quota attribution."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        "MonitoredAccount", on_delete=models.PROTECT, related_name="quota_adjustment_plans"
+    )
+    participant = models.ForeignKey(
+        "Participant", on_delete=models.PROTECT, related_name="quota_adjustment_plans"
+    )
+    baseline_observation = models.ForeignKey(
+        "Observation", on_delete=models.PROTECT, related_name="quota_adjustment_baseline_plans"
+    )
+    latest_observation = models.ForeignKey(
+        "Observation", on_delete=models.PROTECT, related_name="quota_adjustment_latest_plans"
+    )
+    amount_usd = models.DecimalField(max_digits=18, decimal_places=6)
+    reason = models.CharField(max_length=500)
+    source_digest = models.CharField(max_length=64)
+    preview = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    applied_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL
+    )
+
+
+class CPAQuotaAdjustment(models.Model):
+    """Immutable manual attribution; reversals are equal, opposite entries."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        "MonitoredAccount", on_delete=models.PROTECT, related_name="quota_adjustments"
+    )
+    participant = models.ForeignKey(
+        "Participant", on_delete=models.PROTECT, related_name="quota_adjustments"
+    )
+    plan = models.OneToOneField(
+        CPAQuotaAdjustmentPlan,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="adjustment",
+    )
+    reversal_of = models.OneToOneField(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="reversal",
+    )
+    baseline_observation = models.ForeignKey(
+        "Observation", on_delete=models.PROTECT, related_name="quota_adjustment_baselines"
+    )
+    latest_observation = models.ForeignKey(
+        "Observation", on_delete=models.PROTECT, related_name="quota_adjustment_latest"
+    )
+    cycle_started_at = models.DateTimeField()
+    cycle_ended_at = models.DateTimeField()
+    effective_at = models.DateTimeField(db_index=True)
+    amount_usd = models.DecimalField(max_digits=18, decimal_places=6)
+    reason = models.CharField(max_length=500)
+    evidence = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL
+    )
+
+    class Meta:
+        ordering = ["effective_at", "created_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(amount_usd=0), name="cpa_quota_adjustment_nonzero"
+            ),
+            models.CheckConstraint(
+                condition=Q(cycle_ended_at__gt=F("cycle_started_at")),
+                name="cpa_quota_adjustment_positive_cycle",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["account", "cycle_started_at", "cycle_ended_at"])
+        ]
+
+
 class CPAAccountOwnerBinding(models.Model):
     """Prospective fallback ownership. Explicit key and historical claims win."""
 

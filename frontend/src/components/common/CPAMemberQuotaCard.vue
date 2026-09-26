@@ -50,22 +50,44 @@ const used = computed(
     breakdown.value?.usage_usd ??
     props.member.usage_usd,
 );
+const requestUsage = computed(
+  () =>
+    week.value?.members.find(
+      (m) => m.participant_id === props.member.participant_id,
+    )?.request_usage_usd ??
+    breakdown.value?.request_usage_usd ??
+    props.member.request_usage_usd,
+);
+const manualAdjustment = computed(
+  () =>
+    week.value?.members.find(
+      (m) => m.participant_id === props.member.participant_id,
+    )?.manual_adjustment_usd ??
+    breakdown.value?.manual_adjustment_usd ??
+    props.member.manual_adjustment_usd,
+);
+const heldUnexplained = computed(
+  () =>
+    week.value?.members.find(
+      (m) => m.participant_id === props.member.participant_id,
+    )?.held_unexplained_usd ??
+    breakdown.value?.held_unexplained_usd ??
+    props.member.held_unexplained_usd,
+);
 const budgetDelta = computed(() =>
-  budget.value == null ? null : budget.value - used.value,
+  budget.value == null
+    ? null
+    : budget.value - used.value - heldUnexplained.value,
 );
 const remaining = computed(() =>
   upstreamExhausted.value ? 0 : budgetDelta.value,
 );
 const progress = computed(() =>
   budget.value != null && budget.value > 0
-    ? (used.value / budget.value) * 100
+    ? ((used.value + heldUnexplained.value) / budget.value) * 100
     : null,
 );
-const billingRemaining = computed(() =>
-  props.billing?.entitlement_usd != null
-    ? props.billing.entitlement_usd - props.billing.usage_usd
-    : (props.billing?.remaining_usd ?? null),
-);
+const billingRemaining = computed(() => props.billing?.remaining_usd ?? null);
 const money = (value: number | null) =>
   value == null ? "待估算" : formatCurrency(value);
 const compactTokens = computed(() =>
@@ -128,6 +150,17 @@ const compactTokens = computed(() =>
             >{{ compactTokens }} Token</span
           >
         </p>
+        <p class="mt-1 text-xs text-base-content/60">
+          请求日志 {{ formatCurrency(requestUsage) }}
+          <span v-if="manualAdjustment !== 0">
+            · 人工归因 {{ formatCurrency(manualAdjustment) }}</span
+          >
+        </p>
+        <p v-if="heldUnexplained > 0" class="mt-2 text-xs text-warning">
+          另有
+          {{ formatCurrency(heldUnexplained) }}
+          未解释额度按份额暂时冻结；不计入成员用量。
+        </p>
       </div>
       <dl class="grid grid-cols-2 gap-3">
         <div>
@@ -161,7 +194,7 @@ const compactTokens = computed(() =>
           :aria-label="`${member.participant_name}已用个人预算 ${progress.toFixed(1)}%`"
         />
         <p class="text-xs text-base-content/60">
-          已采集用量 / 个人预算 {{ progress.toFixed(1) }}%
+          正式用量与暂时冻结 / 个人预算 {{ progress.toFixed(1) }}%
         </p>
       </div>
       <p v-if="upstreamExhausted" class="text-xs text-base-content/70">
@@ -179,6 +212,15 @@ const compactTokens = computed(() =>
         <strong class="text-xl tabular-nums">{{
           formatCurrency(billing.usage_usd)
         }}</strong>
+        <p class="text-xs text-base-content/60">
+          请求日志 {{ formatCurrency(billing.request_usage_usd) }}
+          <span v-if="billing.manual_adjustment_usd !== 0">
+            · 人工归因 {{ formatCurrency(billing.manual_adjustment_usd) }}</span
+          >
+          <span v-if="billing.held_unexplained_usd > 0">
+            · 暂时冻结 {{ formatCurrency(billing.held_unexplained_usd) }}</span
+          >
+        </p>
         <dl
           v-if="billing.entitlement_usd != null || billingRemaining != null"
           class="grid grid-cols-2 gap-3"

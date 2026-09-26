@@ -18,6 +18,7 @@ from ..reporting.recommendations import _capacity_values
 from .account_owner import account_owner_data
 from .collector_state import get_collector_status
 from .participants import coverage_data, event_owner, owner_index
+from .quota_discrepancy import current_quota_discrepancy, public_discrepancy_data
 from .usage import cpa_event_cost
 
 ZERO = Decimal("0")
@@ -26,6 +27,9 @@ ZERO = Decimal("0")
 def _totals():
     return {
         "usage_usd": ZERO,
+        "request_usage_usd": ZERO,
+        "manual_adjustment_usd": ZERO,
+        "held_unexplained_usd": ZERO,
         "request_count": 0,
         "token_count": 0,
         "unpriced_request_count": 0,
@@ -66,12 +70,25 @@ def account_summary(account, config, now, bindings):
         cost, unknown = cpa_event_cost(event, config)
         for row in (summaries[event_owner(event, bindings)], total):
             row["usage_usd"] += cost
+            row["request_usage_usd"] += cost
             row["request_count"] += 1
             row["token_count"] += event.total_tokens
             row["unpriced_request_count"] += int(unknown)
     coverage = coverage_data(
         account, start, observation.observed_at if observation else now
     )
+    discrepancy = current_quota_discrepancy(account, config, now)
+    if discrepancy is not None:
+        for participant_id, value in discrepancy.member_adjustments.items():
+            amount = Decimal(str(value))
+            summaries[participant_id]["usage_usd"] += amount
+            summaries[participant_id]["manual_adjustment_usd"] += amount
+            total["usage_usd"] += amount
+            total["manual_adjustment_usd"] += amount
+        for participant_id, value in discrepancy.member_holds.items():
+            amount = Decimal(str(value))
+            summaries[participant_id]["held_unexplained_usd"] += amount
+            total["held_unexplained_usd"] += amount
     snapshots = (
         {row.participant_id: row for row in observation.participant_snapshots.all()}
         if observation
@@ -126,6 +143,7 @@ def pool_summary(user, account, config=None):
         observation, start, totals, total, coverage, snapshots, latest_request_at = (
             account_summary(selected, config, now, bindings)
         )
+        discrepancy = current_quota_discrepancy(selected, config, now)
         observed_at = observation.observed_at if observation else None
         unavailable_reasons = []
         if not observation:
@@ -168,6 +186,9 @@ def pool_summary(user, account, config=None):
                 "upstream_used_percent": float(observation.upstream_used_percent) if observation else None,
                 "quota_available": valid,
                 "quota_unavailable_reasons": unavailable_reasons,
+                "quota_discrepancy": public_discrepancy_data(discrepancy)
+                if discrepancy
+                else None,
                 **{
                     k: float(v) if isinstance(v, Decimal) else v
                     for k, v in total.items()
@@ -202,6 +223,9 @@ def pool_summary(user, account, config=None):
                 "charged_percent": None,
                 "remaining_share_percent": None,
                 "usage_usd": float(values["usage_usd"]),
+                "request_usage_usd": float(values["request_usage_usd"]),
+                "manual_adjustment_usd": float(values["manual_adjustment_usd"]),
+                "held_unexplained_usd": float(values["held_unexplained_usd"]),
                 "estimated_capacity_usd": None,
                 "expected_entitlement_usd": None,
                 "consumed_entitlement_usd": None,
@@ -211,12 +235,24 @@ def pool_summary(user, account, config=None):
                 capacity, capacity_lo, capacity_hi, charged, charged_lo, charged_hi = (
                     _capacity_values(snapshot, config)
                 )
+                manual_percent = (
+                    values["manual_adjustment_usd"] * 100 / capacity
+                    if capacity > ZERO
+                    else ZERO
+                )
+                charged += manual_percent
+                charged_lo += manual_percent
+                charged_hi += manual_percent
                 expected = shares[pk] * capacity / 100
                 consumed = charged * capacity / 100
-                remaining = expected - consumed
+                held = values["held_unexplained_usd"]
+                held_percent = held * 100 / capacity if capacity > ZERO else ZERO
+                remaining = expected - consumed - held
                 breakdown.update(
                     charged_percent=float(charged),
-                    remaining_share_percent=float(max(ZERO, shares[pk] - charged)),
+                    remaining_share_percent=float(
+                        max(ZERO, shares[pk] - charged - held_percent)
+                    ),
                     estimated_capacity_usd=float(capacity),
                     expected_entitlement_usd=float(expected),
                     consumed_entitlement_usd=float(consumed),
@@ -226,7 +262,7 @@ def pool_summary(user, account, config=None):
                 row["consumed_entitlement_usd"] += consumed
                 row["remaining_entitlement_usd"] += remaining
                 row["_remaining_upper"] += max(
-                    (shares[pk] - spent) * cap / 100
+                    (shares[pk] - spent) * cap / 100 - held
                     for spent in (charged_lo, charged_hi)
                     for cap in (capacity_lo, capacity_hi)
                 )

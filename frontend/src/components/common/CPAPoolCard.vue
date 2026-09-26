@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useAuthStore } from "@/stores/auth";
 import CPABillingOverview from "./CPABillingOverview.vue";
 import CPAOwnerClaim from "./CPAOwnerClaim.vue";
+import CPAQuotaDiscrepancy from "./CPAQuotaDiscrepancy.vue";
 import CPAMemberQuotaCard from "./CPAMemberQuotaCard.vue";
 import type { CPAPoolSummary } from "@/types/cpa";
 import { formatCurrency } from "@/utils/formatters";
@@ -205,6 +206,11 @@ const members = computed(() =>
             </p>
             <CPAOwnerClaim
               v-if="auth.isStaff"
+              :account="account"
+              @refresh="emit('refresh')"
+            />
+            <CPAQuotaDiscrepancy
+              v-if="provider === 'gpt_load'"
               :account="account"
               @refresh="emit('refresh')"
             />

@@ -46,6 +46,9 @@ def cpa_schemas():
     time = {"type": "string", "format": "date-time"}
     totals = {
         "usage_usd": number,
+        "request_usage_usd": number,
+        "manual_adjustment_usd": number,
+        "held_unexplained_usd": number,
         "request_count": integer,
         "token_count": integer,
         "unpriced_request_count": integer,
@@ -57,6 +60,36 @@ def cpa_schemas():
             "gaps": _array(_object({"started_at": time, "ended_at": time})),
         }
     )
+    discrepancy = {
+        "oneOf": [
+            {"type": "null"},
+            _object(
+                {
+                    "account_id": integer,
+                    "cycle_started_at": time,
+                    "cycle_ended_at": time,
+                    "baseline_observed_at": time,
+                    "observed_through": time,
+                    "official_delta_percent": number,
+                    "request_usage_usd": number,
+                    "suggested_usd": number,
+                    "lower_usd": number,
+                    "upper_usd": number,
+                    "manual_adjustment_usd": number,
+                    "remaining_suggested_usd": number,
+                    "remaining_lower_usd": number,
+                    "remaining_upper_usd": number,
+                    "held_unexplained_usd": number,
+                    "materiality_usd": number,
+                    "can_attribute": boolean,
+                    "status": text,
+                    "reasons": _array(text),
+                    "over_attributed": boolean,
+                    "unallocated_hold_usd": number,
+                }
+            ),
+        ]
+    }
     breakdown = _object(
         {
             "account_id": integer,
@@ -66,6 +99,9 @@ def cpa_schemas():
             "charged_percent": nullable_number,
             "remaining_share_percent": nullable_number,
             "usage_usd": number,
+            "request_usage_usd": number,
+            "manual_adjustment_usd": number,
+            "held_unexplained_usd": number,
             "estimated_capacity_usd": nullable_number,
             "expected_entitlement_usd": nullable_number,
             "consumed_entitlement_usd": nullable_number,
@@ -77,6 +113,9 @@ def cpa_schemas():
         {
             "participant_id": integer,
             "usage_usd": number,
+            "request_usage_usd": number,
+            "manual_adjustment_usd": number,
+            "held_unexplained_usd": number,
             **{
                 key: nullable_number
                 for key in (
@@ -127,7 +166,14 @@ def cpa_schemas():
             },
             **{
                 key: number
-                for key in ("usage_usd", "unattributed_usd", "other_members_usd")
+                for key in (
+                    "usage_usd",
+                    "request_usage_usd",
+                    "manual_adjustment_usd",
+                    "held_unexplained_usd",
+                    "unattributed_usd",
+                    "other_members_usd",
+                )
             },
             "reasons": _array(text),
             "cycles": _array(cycle),
@@ -154,7 +200,14 @@ def cpa_schemas():
             },
             **{
                 key: number
-                for key in ("usage_usd", "unattributed_usd", "other_members_usd")
+                for key in (
+                    "usage_usd",
+                    "request_usage_usd",
+                    "manual_adjustment_usd",
+                    "held_unexplained_usd",
+                    "unattributed_usd",
+                    "other_members_usd",
+                )
             },
             "unpriced_request_count": integer,
             "members": _array(
@@ -162,10 +215,14 @@ def cpa_schemas():
                     {
                         "participant_id": integer,
                         "usage_usd": number,
+                        "request_usage_usd": number,
+                        "manual_adjustment_usd": number,
+                        "held_unexplained_usd": number,
                         "usage_percent": nullable_number,
                     }
                 )
             ),
+            "quota_discrepancy": discrepancy,
         }
     )
     return {
@@ -206,6 +263,7 @@ def cpa_schemas():
                             "coverage": coverage,
                             "quota_available": boolean,
                             "quota_unavailable_reasons": _array(text),
+                            "quota_discrepancy": discrepancy,
                         }
                     )
                 ),

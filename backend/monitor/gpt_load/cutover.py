@@ -61,6 +61,8 @@ def _merge_blockers(
         blockers.append("误建账号已经提交过额度重置")
     if CPAClaimPlan.objects.filter(account=source).exists():
         blockers.append("误建账号存在请求认领计划")
+    if source.quota_adjustment_plans.exists() or source.quota_adjustments.exists():
+        blockers.append("误建账号存在人工额度归因记录")
     if ParticipantBalanceOperationSource.objects.filter(account=source).exists():
         blockers.append("误建账号参与过余额写入操作")
     if Sub2APIUserUsageSample.objects.filter(account_id=source_fact_key).exists():

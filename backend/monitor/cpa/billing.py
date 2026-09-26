@@ -13,10 +13,11 @@ from django.db.models import Q
 
 from ..access import visible_accounts_for
 from ..accounting.boundaries import same_official_reset
-from ..models import CPAUsageEvent, Observation
+from ..models import CPAQuotaAdjustment, CPAUsageEvent, Observation
 from ..reporting.recommendations import _capacity_values
 from .capacity_estimate import particle_capacity_estimate
 from .participants import coverage_data, event_owner
+from .quota_discrepancy import current_quota_discrepancy, public_discrepancy_data
 from .usage import cpa_event_cost
 
 ZERO = Decimal(0)
@@ -185,6 +186,9 @@ def billing_summary(user, account, config, now, bindings, members):
         expired_usd=None,
         available_usd=None,
         usage_usd=0.0,
+        request_usage_usd=0.0,
+        manual_adjustment_usd=0.0,
+        held_unexplained_usd=0.0,
         unattributed_usd=0.0,
         other_members_usd=0.0,
         unallocated_usd=None,
@@ -205,9 +209,13 @@ def billing_summary(user, account, config, now, bindings, members):
         .filter(Q(pool=pool) | Q(cpa_contracts__pool_id_at_capture=pool.id))
         .distinct()
     )
-    usage, entitlement, completed_usage, completed_entitlement = (
-        defaultdict(lambda: ZERO) for _ in range(4)
-    )
+    usage = defaultdict(lambda: ZERO)
+    request_usage = defaultdict(lambda: ZERO)
+    manual_adjustment = defaultdict(lambda: ZERO)
+    held_unexplained = defaultdict(lambda: ZERO)
+    entitlement = defaultdict(lambda: ZERO)
+    completed_usage = defaultdict(lambda: ZERO)
+    completed_entitlement = defaultdict(lambda: ZERO)
     actual = future = expired = available = reserve = ZERO
     future_known = True
     capacity_known = True
@@ -216,6 +224,12 @@ def billing_summary(user, account, config, now, bindings, members):
     for selected in accounts:
         contracts = list(selected.cpa_contracts.order_by("effective_at", "id"))
         cycles = cycle_rows(selected, config, now)
+        adjustments = list(
+            CPAQuotaAdjustment.objects.filter(
+                account=selected,
+                effective_at__lte=now,
+            ).order_by("effective_at", "created_at", "id")
+        )
         event_start = min([start, *[r["start"] for r in cycles if r["end"] > start]])
         events = list(
             CPAUsageEvent.objects.filter(
@@ -330,7 +344,19 @@ def billing_summary(user, account, config, now, bindings, members):
             )
             amount = capacity * weight if capacity is not None else None
             closed = row["end"] <= now
-            full_used = sum((cost for _, cost, _ in cycle_costs), ZERO)
+            cycle_adjustment = sum(
+                (
+                    adjustment.amount_usd
+                    for adjustment in adjustments
+                    if same_official_reset(
+                        adjustment.cycle_ended_at, row.get("natural_end", row["end"])
+                    )
+                ),
+                ZERO,
+            )
+            full_used = (
+                sum((cost for _, cost, _ in cycle_costs), ZERO) + cycle_adjustment
+            )
             loss = (
                 max(ZERO, capacity - full_used) * weight
                 if closed and capacity is not None and not row_reasons
@@ -440,8 +466,25 @@ def billing_summary(user, account, config, now, bindings, members):
                 reasons.add("请求缺少模型价格")
             owner = event_owner(e, bindings)
             usage[owner] += cost
+            request_usage[owner] += cost
             if any(r["start"] <= e.occurred_at < r["end"] <= now for r in cycles):
                 completed_usage[owner] += cost
+        for adjustment in adjustments:
+            if not start <= adjustment.effective_at < min(now, end):
+                continue
+            contract = contract_at(contracts, adjustment.effective_at)
+            if contract and contract.pool_id_at_capture != pool.id:
+                continue
+            if contract is None and selected.pool_id != pool.id:
+                continue
+            usage[adjustment.participant_id] += adjustment.amount_usd
+            manual_adjustment[adjustment.participant_id] += adjustment.amount_usd
+            if adjustment.cycle_ended_at <= now:
+                completed_usage[adjustment.participant_id] += adjustment.amount_usd
+        discrepancy = current_quota_discrepancy(selected, config, now)
+        if discrepancy is not None and start <= now < end:
+            for participant_id, value in discrepancy.member_holds.items():
+                held_unexplained[participant_id] += Decimal(str(value))
     known = not reasons
     total = actual + future
     result.update(
@@ -451,6 +494,9 @@ def billing_summary(user, account, config, now, bindings, members):
         expired_usd=float(expired) if known else None,
         available_usd=float(available) if known else None,
         usage_usd=float(sum(usage.values(), ZERO)),
+        request_usage_usd=float(sum(request_usage.values(), ZERO)),
+        manual_adjustment_usd=float(sum(manual_adjustment.values(), ZERO)),
+        held_unexplained_usd=float(sum(held_unexplained.values(), ZERO)),
         unattributed_usd=float(usage[None]),
         other_members_usd=float(
             sum(
@@ -461,13 +507,16 @@ def billing_summary(user, account, config, now, bindings, members):
         unallocated_usd=float(reserve) if known else None,
         reasons=sorted(reasons),
     )
-    remaining = {pk: max(ZERO, entitlement[pk] - usage[pk]) for pk in members}
+    remaining = {
+        pk: max(ZERO, entitlement[pk] - usage[pk] - held_unexplained[pk])
+        for pk in members
+    }
     denominator = (
         sum(remaining.values(), ZERO)
         + reserve
         + sum(
             (
-                max(ZERO, value - usage[pk])
+                max(ZERO, value - usage[pk] - held_unexplained[pk])
                 for pk, value in entitlement.items()
                 if pk not in members
             ),
@@ -475,7 +524,7 @@ def billing_summary(user, account, config, now, bindings, members):
         )
     )
     for pk in members:
-        rest = entitlement[pk] - usage[pk]
+        rest = entitlement[pk] - usage[pk] - held_unexplained[pk]
         recommended = (
             min(available, denominator) * remaining[pk] / denominator
             if denominator
@@ -485,6 +534,9 @@ def billing_summary(user, account, config, now, bindings, members):
             dict(
                 participant_id=pk,
                 usage_usd=float(usage[pk]),
+                request_usage_usd=float(request_usage[pk]),
+                manual_adjustment_usd=float(manual_adjustment[pk]),
+                held_unexplained_usd=float(held_unexplained[pk]),
                 usage_percent=float(usage[pk] / total * 100)
                 if capacity_known and contracts_known and total
                 else None,
@@ -515,6 +567,7 @@ def weekly_distribution(accounts, members, config, now, bindings):
         obs, start, usage, total, coverage, _, latest_request = account_summary(
             account, config, now, bindings
         )
+        discrepancy = current_quota_discrepancy(account, config, now)
         cycles = cycle_rows(account, config, now)
         current = next(
             (r for r in reversed(cycles) if r["start"] <= now < r["end"]), None
@@ -545,7 +598,14 @@ def weekly_distribution(accounts, members, config, now, bindings):
                 remaining_usd=(
                     0.0
                     if upstream_remaining == ZERO
-                    else float(max(ZERO, capacity - total["usage_usd"]))
+                    else float(
+                        max(
+                            ZERO,
+                            capacity
+                            - total["usage_usd"]
+                            - total["held_unexplained_usd"],
+                        )
+                    )
                     if capacity is not None and complete
                     else None
                 ),
@@ -555,6 +615,12 @@ def weekly_distribution(accounts, members, config, now, bindings):
                     else None
                 ),
                 usage_usd=float(total["usage_usd"]),
+                request_usage_usd=float(total["request_usage_usd"]),
+                manual_adjustment_usd=float(total["manual_adjustment_usd"]),
+                held_unexplained_usd=float(total["held_unexplained_usd"]),
+                quota_discrepancy=public_discrepancy_data(discrepancy)
+                if discrepancy
+                else None,
                 unpriced_request_count=total["unpriced_request_count"],
                 unattributed_usd=float(usage[None]["usage_usd"]),
                 other_members_usd=float(
@@ -571,6 +637,13 @@ def weekly_distribution(accounts, members, config, now, bindings):
                     dict(
                         participant_id=pk,
                         usage_usd=float(usage[pk]["usage_usd"]),
+                        request_usage_usd=float(usage[pk]["request_usage_usd"]),
+                        manual_adjustment_usd=float(
+                            usage[pk]["manual_adjustment_usd"]
+                        ),
+                        held_unexplained_usd=float(
+                            usage[pk]["held_unexplained_usd"]
+                        ),
                         usage_percent=float(usage[pk]["usage_usd"] / capacity * 100)
                         if capacity
                         else None,

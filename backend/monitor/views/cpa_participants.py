@@ -1,6 +1,8 @@
 """CPA carpool API. Administrative identity writes and scoped reads stay separate."""
 
+from dataclasses import asdict
 from datetime import timedelta
+from decimal import Decimal
 
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -21,6 +23,8 @@ from ..models import (
     AppSettings,
     CPAAPIKey,
     CPAClaimPlan,
+    CPAQuotaAdjustment,
+    CPAQuotaAdjustmentPlan,
     CPAKeyBinding,
     CPAUsageEvent,
     PagePermission,
@@ -243,6 +247,137 @@ class CPAClaimApplyView(CPAAdminView):
     def post(self, request, plan_id):
         get_object_or_404(CPAClaimPlan, pk=plan_id)
         return ok(claim_data(apply_claim(plan_id)))
+
+
+def quota_adjustment_data(adjustment):
+    return {
+        "id": str(adjustment.id),
+        "account_id": adjustment.account_id,
+        "participant_id": adjustment.participant_id,
+        "participant_name": adjustment.participant.name,
+        "baseline_observation_id": adjustment.baseline_observation_id,
+        "latest_observation_id": adjustment.latest_observation_id,
+        "cycle_started_at": adjustment.cycle_started_at.isoformat(),
+        "cycle_ended_at": adjustment.cycle_ended_at.isoformat(),
+        "effective_at": adjustment.effective_at.isoformat(),
+        "amount_usd": float(adjustment.amount_usd),
+        "reason": adjustment.reason,
+        "reversal_of": str(adjustment.reversal_of_id)
+        if adjustment.reversal_of_id
+        else None,
+        "created_at": adjustment.created_at.isoformat(),
+        "created_by": adjustment.created_by_id,
+        "created_by_name": adjustment.created_by.username
+        if adjustment.created_by
+        else None,
+        "reversed": CPAQuotaAdjustment.objects.filter(
+            reversal_of_id=adjustment.id
+        ).exists(),
+    }
+
+
+def quota_adjustment_plan_data(plan):
+    return {
+        "id": str(plan.id),
+        "account_id": plan.account_id,
+        "participant_id": plan.participant_id,
+        "amount_usd": float(plan.amount_usd),
+        "reason": plan.reason,
+        "expires_at": plan.expires_at.isoformat(),
+        "applied_at": plan.applied_at.isoformat() if plan.applied_at else None,
+        **plan.preview,
+    }
+
+
+class QuotaAdjustmentWrite(serializers.Serializer):
+    participant_id = serializers.PrimaryKeyRelatedField(
+        queryset=Participant.objects.all(), source="participant"
+    )
+    latest_observation_id = serializers.IntegerField(min_value=1)
+    amount_usd = serializers.DecimalField(
+        max_digits=18, decimal_places=6, min_value=Decimal("0.000001")
+    )
+    reason = serializers.CharField(max_length=500, trim_whitespace=True)
+
+
+class QuotaAdjustmentReverseWrite(serializers.Serializer):
+    reason = serializers.CharField(max_length=500, trim_whitespace=True)
+
+
+class CPAQuotaDiscrepancyView(CPAAdminView):
+    def get(self, request):
+        from ..cpa.quota_discrepancy import adjustment_history, quota_discrepancies
+
+        account = cpa_account(request)
+        if account.provider != "gpt_load":
+            raise serializers.ValidationError("额度差额核对仅适用于 GPT-Load 账号")
+        cycles = quota_discrepancies(account)
+        participant_ids = sorted(
+            {
+                participant_id
+                for cycle in cycles
+                for participant_id in cycle.eligible_participant_ids
+            }
+        )
+        participants = Participant.objects.filter(pk__in=participant_ids).order_by(
+            "name", "id"
+        )
+        return ok(
+            {
+                "cycles": [asdict(row) for row in cycles],
+                "adjustments": [
+                    quota_adjustment_data(row) for row in adjustment_history(account)
+                ],
+                "participants": [
+                    {"id": row.id, "name": row.name} for row in participants
+                ],
+            }
+        )
+
+
+class CPAQuotaAdjustmentPreviewView(CPAAdminView):
+    def post(self, request):
+        from ..cpa.quota_discrepancy import preview_adjustment
+
+        account = cpa_account(request)
+        payload = QuotaAdjustmentWrite(data=request.data)
+        payload.is_valid(raise_exception=True)
+        return ok(
+            quota_adjustment_plan_data(
+                preview_adjustment(
+                    account=account,
+                    user=request.user,
+                    **payload.validated_data,
+                )
+            ),
+            201,
+        )
+
+
+class CPAQuotaAdjustmentApplyView(CPAAdminView):
+    def post(self, request, plan_id):
+        from ..cpa.quota_discrepancy import apply_adjustment
+
+        get_object_or_404(CPAQuotaAdjustmentPlan, pk=plan_id)
+        return ok(quota_adjustment_data(apply_adjustment(plan_id)))
+
+
+class CPAQuotaAdjustmentReverseView(CPAAdminView):
+    def post(self, request, adjustment_id):
+        from ..cpa.quota_discrepancy import reverse_adjustment
+
+        get_object_or_404(CPAQuotaAdjustment, pk=adjustment_id)
+        payload = QuotaAdjustmentReverseWrite(data=request.data)
+        payload.is_valid(raise_exception=True)
+        return ok(
+            quota_adjustment_data(
+                reverse_adjustment(
+                    adjustment_id,
+                    user=request.user,
+                    **payload.validated_data,
+                )
+            )
+        )
 
 
 class CPASummaryView(CPAReadView):

@@ -45,7 +45,9 @@ const weeklyRemaining = (week: CPAWeeklyDistribution) => {
   if (weeklyExhausted(week)) return 0;
   if (week.remaining_usd != null) return week.remaining_usd;
   const capacity = comparableWeeklyCapacity(week);
-  return capacity == null ? null : Math.max(0, capacity - week.usage_usd);
+  return capacity == null
+    ? null
+    : Math.max(0, capacity - week.usage_usd - week.held_unexplained_usd);
 };
 const memberName = (id: number) =>
   props.data.members.find((m) => m.participant_id === id)?.participant_name ??
@@ -93,6 +95,11 @@ const monthlySegments = computed(() => [
     label: "其他历史成员",
     value: billing.value?.other_members_usd ?? 0,
     color: "#a16207",
+  },
+  {
+    label: "未解释冻结",
+    value: billing.value?.held_unexplained_usd ?? 0,
+    color: "#f59e0b",
   },
 ]);
 </script>
@@ -186,6 +193,11 @@ const monthlySegments = computed(() => [
               color: '#a16207',
             },
             {
+              label: '未解释冻结',
+              value: week.held_unexplained_usd,
+              color: '#f59e0b',
+            },
+            {
               label: '估算剩余',
               value: weeklyRemaining(week),
               color: '#94a3b8',
@@ -245,6 +257,10 @@ const monthlySegments = computed(() => [
             <div>
               <p class="text-xs text-base-content/60">累计已采集</p>
               <strong class="text-2xl">{{ money(billing.usage_usd) }}</strong>
+              <p class="mt-1 text-xs text-base-content/60">
+                请求 {{ money(billing.request_usage_usd) }} · 人工归因
+                {{ money(billing.manual_adjustment_usd) }}
+              </p>
             </div>
             <div>
               <p class="text-xs text-base-content/60">已失效额度</p>
@@ -286,6 +302,14 @@ const monthlySegments = computed(() => [
             {{
               money(billing.unallocated_usd)
             }}。个人预计剩余权益用于跨周协调；已失效额度无法在下周恢复，建议不会修改份额或限制调用。
+          </p>
+          <p
+            v-if="billing.held_unexplained_usd > 0"
+            class="text-sm text-warning"
+          >
+            另有
+            {{ money(billing.held_unexplained_usd) }}
+            未解释额度按份额冻结；未计入累计用量。
           </p>
           <p v-if="billing.reasons.length" class="alert text-sm" role="status">
             结算待补全：{{

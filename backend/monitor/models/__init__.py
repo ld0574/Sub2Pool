@@ -51,6 +51,8 @@ __all__ = [
     "CPAKeyBinding",
     "CPAClaimPlan",
     "CPAClaimEvent",
+    "CPAQuotaAdjustmentPlan",
+    "CPAQuotaAdjustment",
     "CPAQuotaContract",
     "HistoricalRebuildRun",
     "HistoryMaintenanceState",
@@ -84,4 +86,14 @@ __all__ = [
 
 from .research import ResearchSettings, ResearchRequestComponents, ResearchEvidenceBatch
 
-from .cpa_participants import CPAQuotaResetRequest, CPAAccountOwnerBinding, CPAAPIKey, CPAKeyBinding, CPAClaimPlan, CPAClaimEvent, CPAQuotaContract
+from .cpa_participants import (
+    CPAQuotaResetRequest,
+    CPAAccountOwnerBinding,
+    CPAAPIKey,
+    CPAKeyBinding,
+    CPAClaimPlan,
+    CPAClaimEvent,
+    CPAQuotaAdjustmentPlan,
+    CPAQuotaAdjustment,
+    CPAQuotaContract,
+)
