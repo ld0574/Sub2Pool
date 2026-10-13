@@ -29,6 +29,7 @@ class DeploymentTests(unittest.TestCase):
             "name": "sub2pool",
             "services": {"app": {
                 "image": deploy.IMAGE,
+                "build": {"context": str(self.repo), "dockerfile": "Dockerfile"},
                 "environment": {"DJANGO_SECRET_KEY": self.secret, "PINCH_DATA_DIR": "/app/data"},
                 "volumes": [{"type": "volume", "source": "pinche-data", "target": "/app/data"}],
                 "networks": {"default": None, "cpa": None},
@@ -43,7 +44,7 @@ class DeploymentTests(unittest.TestCase):
                 "Labels": {
                     "com.docker.compose.project": "sub2pool",
                     "com.docker.compose.project.working_dir": str(self.repo),
-                    "com.docker.compose.project.config_files": ",".join(map(str, self.files)),
+                    "com.docker.compose.project.config_files": str(self.files[0]),
                     "com.docker.compose.oneoff": "False",
                 },
                 "Env": ["DJANGO_SECRET_KEY=" + self.secret, "PINCH_DATA_DIR=/app/data"],
@@ -61,11 +62,12 @@ class DeploymentTests(unittest.TestCase):
         self.on_up = lambda: None
         self.containers = [self.old]
         self.other_data_user = False
+        self.branch = "cpa"
 
     def fake_run(self, *args, capture=True):
         self.commands.append(args)
         if args[:3] == ("git", "branch", "--show-current"):
-            return "cpa"
+            return self.branch
         if args[:2] == ("git", "pull"):
             if self.failure == "pull":
                 raise deploy.DeploymentError("pull failed")
@@ -115,7 +117,19 @@ class DeploymentTests(unittest.TestCase):
             return ""
         if args[:2] == ("docker", "compose"):
             if "config" in args:
+                for index, option in enumerate(args):
+                    if option == "-f":
+                        path = Path(args[index + 1])
+                        if not path.is_absolute():
+                            path = self.repo / path
+                        if not path.is_file():
+                            raise deploy.DeploymentError("Compose 文件不存在")
                 return json.dumps(self.config)
+            if "build" in args:
+                if self.failure == "build":
+                    raise deploy.DeploymentError("build failed")
+                self.on_build()
+                return ""
             if "ps" in args:
                 return (self.new or self.old)["Id"] if "-q" in args else "healthy"
             if "up" in args:
@@ -140,14 +154,16 @@ class DeploymentTests(unittest.TestCase):
         return result, output.getvalue()
 
     def operations(self):
-        return [args[1] for args in self.commands if args[0] == "docker"]
+        return ["build" if args[:2] == ("docker", "compose") and "build" in args
+                else args[1] for args in self.commands if args[0] == "docker"]
 
     def assert_service_untouched(self):
         self.assertNotIn("stop", self.operations())
         self.assertFalse(any("up" in c for c in self.commands))
 
     def test_recovered_volume_and_shared_network_survive_upgrade(self):
-        result, output = self.execute()
+        result, output = self.execute(["-p", "sub2pool", "-f", str(self.files[0]),
+                                       "-f", str(self.files[1])])
         self.assertEqual(result, 0, output)
         ops = self.operations()
         self.assertLess(ops.index("build"), ops.index("stop"))
@@ -163,6 +179,57 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((backup / "data/cpa-spool/pending.json").is_file())
         self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
         self.assertEqual((backup / "compose.resolved.json").stat().st_mode & 0o777, 0o600)
+
+    def test_gpt_load_branch_uses_compose_build_and_up_with_original_options(self):
+        self.branch = "gpt-load"
+        options = ["-p", "sub2pool", "-f", str(self.files[0])]
+        result, output = self.execute(options)
+        self.assertEqual(result, 0, output)
+        self.assertIn("拉取 gpt-load 最新代码", output)
+        self.assertIn(("docker", "compose", *options, "build", "app"), self.commands)
+        up = next(command for command in self.commands if "up" in command)
+        self.assertEqual(list(up[2:2 + len(options)]), options)
+        self.assertNotIn(str(self.files[1]), up)
+        self.assertFalse(any(command[:2] == ("docker", "build") for command in self.commands))
+
+    def test_gpt_load_default_uses_sub2pool_and_single_compose_file(self):
+        self.branch = "gpt-load"
+        result, output = self.execute()
+        self.assertEqual(result, 0, output)
+        build = next(command for command in self.commands if "build" in command)
+        up = next(command for command in self.commands if "up" in command)
+        compose = ("docker", "compose", "-p", "sub2pool", "-f", "compose.yaml")
+        self.assertEqual(build, (*compose, "build", "app"))
+        self.assertEqual(up[:len(compose)], compose)
+        self.assertNotIn(str(self.files[1]), up)
+
+    def test_gpt_load_check_only_does_not_change_service(self):
+        self.branch = "gpt-load"
+        result, output = self.execute(check_only=True)
+        self.assertEqual(result, 0, output)
+        self.assertNotIn(("git", "pull", "--ff-only"), self.commands)
+        self.assertNotIn("build", self.operations())
+        self.assertIn(("docker", "compose", "-p", "sub2pool", "-f", "compose.yaml",
+                       "config", "--format", "json"), self.commands)
+        self.assert_service_untouched()
+
+    def test_unsupported_or_detached_branch_is_rejected_before_docker(self):
+        for branch in ("main", "feature-test", ""):
+            with self.subTest(branch=branch):
+                self.branch = branch
+                self.commands = []
+                result, output = self.execute()
+                self.assertEqual(result, 1, output)
+                self.assertIn("cpa 或 gpt-load", output)
+                self.assertEqual(self.commands, [("git", "branch", "--show-current")])
+
+    def test_legacy_image_only_compose_still_builds_source(self):
+        del self.config["services"]["app"]["build"]
+        result, output = self.execute()
+        self.assertEqual(result, 0, output)
+        self.assertIn(("docker", "build", "-t", deploy.IMAGE, "."), self.commands)
+        self.assertFalse(any(command[:2] == ("docker", "compose") and "build" in command
+                             for command in self.commands))
 
     def test_default_source_volume_mismatch_aborts_before_pull(self):
         self.config["volumes"]["pinche-data"]["name"] = "sub2pool_pinche-data"
@@ -213,8 +280,23 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.execute()[0], 1)
         self.assert_service_untouched()
 
-    def test_missing_original_compose_file_has_no_default_fallback(self):
+    def test_missing_default_compose_file_has_no_fallback(self):
+        self.files[0].unlink()
+        self.assertEqual(self.execute()[0], 1)
+        self.assert_service_untouched()
+        self.assertNotIn(("git", "pull", "--ff-only"), self.commands)
+
+    def test_default_does_not_inject_historical_overrides(self):
+        deploy.labels(self.old)["com.docker.compose.project.config_files"] = ",".join(map(str, self.files))
         self.files[1].unlink()
+        result, output = self.execute()
+        self.assertEqual(result, 0, output)
+        build = next(command for command in self.commands if "build" in command)
+        self.assertEqual(build, ("docker", "compose", "-p", "sub2pool", "-f", "compose.yaml",
+                                 "build", "app"))
+
+    def test_default_does_not_select_other_project_in_same_directory(self):
+        deploy.labels(self.old)["com.docker.compose.project"] = "other-project"
         self.assertEqual(self.execute()[0], 1)
         self.assert_service_untouched()
 
@@ -226,15 +308,25 @@ class DeploymentTests(unittest.TestCase):
                 self.assertEqual(self.execute()[0], 1)
                 self.assert_service_untouched()
 
-    def test_custom_environment_file_is_reused(self):
+    def test_explicit_custom_environment_file_is_reused(self):
         env = self.repo / ".env.production"
         env.touch()
         deploy.labels(self.old)["com.docker.compose.project.environment_file"] = str(env)
-        result, output = self.execute()
+        options = [*deploy.DEFAULT_COMPOSE_OPTIONS, "--env-file", str(env)]
+        result, output = self.execute(options)
         self.assertEqual(result, 0, output)
         up = next(c for c in self.commands if "up" in c)
         self.assertIn("--env-file", up)
         self.assertIn(str(env), up)
+
+    def test_explicit_options_replace_defaults_for_other_project(self):
+        deploy.labels(self.old)["com.docker.compose.project"] = "another-pool"
+        self.config["name"] = "another-pool"
+        options = ["-p", "another-pool", "-f", str(self.files[1])]
+        result, output = self.execute(options)
+        self.assertEqual(result, 0, output)
+        build = next(command for command in self.commands if "build" in command)
+        self.assertEqual(build, ("docker", "compose", *options, "build", "app"))
 
     def test_explicit_original_options_are_reused(self):
         options = ["-p", "sub2pool", "-f", str(self.files[0]), "-f", str(self.files[1])]

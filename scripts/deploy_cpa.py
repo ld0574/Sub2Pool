@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade an existing CPA installation without guessing its storage or networks."""
+"""Upgrade an existing CPA/GPT-Load installation using its original Compose config."""
 from contextlib import closing
 import fcntl
 import json
@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 IMAGE = "sub2pool-cpa:local"
 DATA_DIR = "/app/data"
+SUPPORTED_BRANCHES = {"cpa", "gpt-load"}
+DEFAULT_COMPOSE_OPTIONS = ("-p", "sub2pool", "-f", "compose.yaml")
 
 
 class DeploymentError(Exception):
@@ -45,31 +47,14 @@ def existing_containers():
 
 
 def select_deployment(repo, options, containers):
-    if options:
-        config = json.loads(run("docker", "compose", *options, "config", "--format", "json"))
-        project = config.get("name")
-        matches = [c for c in containers if labels(c).get("com.docker.compose.project") == project]
-    else:
-        matches = [c for c in containers
-                   if labels(c).get("com.docker.compose.project.working_dir")
-                   and Path(labels(c)["com.docker.compose.project.working_dir"]).resolve() == repo]
+    options = list(options or DEFAULT_COMPOSE_OPTIONS)
+    config = json.loads(run("docker", "compose", *options, "config", "--format", "json"))
+    project = config.get("name")
+    matches = [c for c in containers if labels(c).get("com.docker.compose.project") == project]
     matches = [c for c in matches if labels(c).get("com.docker.compose.oneoff", "false").lower() != "true"]
     if len(matches) != 1:
         raise DeploymentError("无法唯一确定此部署的现有 app 容器；请传入原部署的 -p、-f 和 --env-file 参数。此脚本不用于首次安装。")
     container = matches[0]
-    project = labels(container)["com.docker.compose.project"]
-    if not options:
-        files = labels(container).get("com.docker.compose.project.config_files", "").split(",")
-        if not all(p and Path(p).is_file() for p in files):
-            raise DeploymentError("原 Compose 文件不存在；不会回退到仓库默认配置。请恢复原配置或显式传入正确的 -f 参数。")
-        options = ["--project-directory", str(repo), "-p", project]
-        for path in files:
-            options += ["-f", path]
-        env_files = labels(container).get("com.docker.compose.project.environment_file", "")
-        for path in filter(None, env_files.split(",")):
-            if not Path(path).is_file():
-                raise DeploymentError("原 Compose 环境文件不存在，请恢复原文件。")
-            options += ["--env-file", path]
     return ["docker", "compose", *options], container
 
 
@@ -154,8 +139,9 @@ def deploy(repo, options, check_only=False):
     old = None
     backup = None
     try:
-        if run("git", "branch", "--show-current") != "cpa":
-            raise DeploymentError("请在 cpa 分支运行此脚本。")
+        branch = run("git", "branch", "--show-current")
+        if branch not in SUPPORTED_BRANCHES:
+            raise DeploymentError("请在 cpa 或 gpt-load 分支运行此脚本；不会自动切换分支。")
         run("docker", "compose", "version")
         run("docker", "info")
         compose, old = select_deployment(repo, options, existing_containers())
@@ -169,7 +155,7 @@ def deploy(repo, options, check_only=False):
             print("检查通过；未拉取代码、构建镜像、停止或替换容器。", flush=True)
             return 0
 
-        stage = "拉取 cpa 最新代码"
+        stage = f"拉取 {branch} 最新代码"
         print(f"[1/5] {stage}", flush=True)
         run("git", "pull", "--ff-only", capture=False)
         config = read_and_validate(compose, old)
@@ -180,7 +166,12 @@ def deploy(repo, options, check_only=False):
         run("docker", "image", "tag", old["Image"], rollback_image)
         stage = "构建新镜像（旧服务继续运行）"
         print(f"[2/5] {stage}", flush=True)
-        run("docker", "build", "-t", IMAGE, ".", capture=False)
+        if config["services"]["app"].get("build"):
+            run(*compose, "build", "app", capture=False)
+        else:
+            # Legacy GHCR installations may only override app.image, with no
+            # Compose build section. Retain their existing source-build path.
+            run("docker", "build", "-t", IMAGE, ".", capture=False)
 
         stage = "再次核对部署状态"
         ids = run(*compose, "ps", "-a", "-q", "app").split()
@@ -251,10 +242,13 @@ def main():
         print("需要 Python 3.9 或更新版本（Debian 11 及更新版本默认满足）。", file=sys.stderr)
         return 1
     if any(option in ("-h", "--help") for option in sys.argv[1:]):
-        print("用法：scripts/deploy-cpa.sh [--check] [Compose 全局参数]\n"
-              "默认沿用当前仓库现有 app 容器的 Compose 文件、项目名和可追溯的环境文件。\n"
+        print("用法：scripts/deploy.sh [--check] [Compose 全局参数]\n"
+              "支持 cpa 和 gpt-load 分支；拉取当前分支后构建并更新 app，不自动切换分支。\n"
+              "不带参数默认使用 -p sub2pool -f compose.yaml（仓库目录），无需重复填写。\n"
               "--check 只核对当前配置，不拉取、构建、备份或替换容器。\n"
-              "例：scripts/deploy-cpa.sh -p sub2pool -f compose.yaml -f compose.recover-data.yaml\n"
+              "例：bash scripts/deploy.sh\n"
+              "显式 Compose 参数覆盖默认参数；旧入口 scripts/deploy-cpa.sh 仍兼容。\n"
+              "有覆盖文件或自定义环境文件时传入原来的全部 -p、-f 和 --env-file 参数。\n"
               "仅升级现有实例；需 Python 3.9+、Git、Docker Compose（支持 --wait）。")
         return 0
     def interrupted(signum, frame):

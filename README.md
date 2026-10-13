@@ -112,6 +112,28 @@ docker compose up -d --build
 
 本地 Compose 仍使用单容器架构：构建阶段编译 Vue 3，运行阶段由 Django/WhiteNoise 提供前端静态文件和 SPA 路由。
 
+### 一键更新 CPA / GPT-Load 源码部署
+
+在服务器原仓库目录、原来的 `cpa` 或 `gpt-load` 分支执行：
+
+```bash
+# 首次获取新版脚本；后续脚本会自动拉取当前分支。
+git pull --ff-only
+bash scripts/deploy.sh
+```
+
+脚本默认使用仓库目录的 `-p sub2pool -f compose.yaml`，无需填写参数。自动拉取当前分支、构建、停写备份、更新并等待健康检查。不会切换分支、删除数据卷或重新生成密钥。仅升级现有实例，不用于首次安装；需要 Python 3.9+ 和支持 `--wait` 的 Docker Compose。
+
+以下显式写法与默认命令等价；需要其他项目名、覆盖文件或环境文件时，可传入完整 Compose 参数替换默认参数：
+
+```bash
+bash scripts/deploy.sh -p sub2pool -f compose.yaml
+```
+
+构建使用同一组参数执行 `docker compose … build app`，然后只更新 `app`。脚本不会从历史容器标签自动添加覆盖文件或环境文件；有额外覆盖文件或 `--env-file` 时继续带上原参数，不要省略原来用于数据卷和网络的文件。只有镜像覆盖、没有 Compose `build` 配置的旧部署仍使用原来的本地源码构建方式。旧入口 `scripts/deploy-cpa.sh` 继续兼容。
+
+可先执行 `bash scripts/deploy.sh --check`，只核对配置，不拉取、构建或替换容器。完整数据备份位于仓库同级的 `<仓库目录名>-backups/`；新版本启动后若迁移或健康检查失败，不自动回滚数据库，请检查容器日志并按备份恢复。详见 [CPA 部署与数据恢复说明](docs/cpa-carpool.md)。
+
 ## 算法与开发文档
 
 - [后端架构](docs/architecture.md)

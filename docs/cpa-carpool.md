@@ -138,18 +138,18 @@ Debian 升级脚本需要 Python 3.9+（Debian 11 及更新版本默认满足）
 
 ```bash
 git pull --ff-only
-./scripts/deploy-cpa.sh --check  # 先核对，不停止或替换容器
-./scripts/deploy-cpa.sh          # 确需发版时再执行
+bash scripts/deploy.sh --check  # 先核对，不停止或替换容器
+bash scripts/deploy.sh          # 确需发版时再执行
 ```
 
-脚本仅升级现有运行中的实例，不用于首次安装。不带参数时，根据当前仓库对应的现有 `app` 容器标签沿用原 Compose 文件、项目名和标签中记录的环境文件。找不到唯一容器或原配置文件时直接停止，不猜测部署配置。原来使用自定义环境文件但旧 Compose 没有记录该文件时，需要显式传入原 `--env-file` 参数。
+脚本支持 `cpa` 和 `gpt-load` 分支，旧入口 `scripts/deploy-cpa.sh` 继续兼容。仅升级现有运行中的实例，不用于首次安装。不带参数默认使用仓库目录的 `-p sub2pool -f compose.yaml`；显式传入 Compose 参数时替换默认参数。脚本不会从历史容器标签自动添加覆盖文件或环境文件。找不到唯一容器或数据挂载、网络、密钥不一致时直接停止；使用额外覆盖文件或自定义环境文件的实例仍需传入原来的全部 `-p`、`-f` 和 `--env-file` 参数。
 
 `--check` 仅验证当前部署配置，不拉取代码、构建镜像、备份或停止容器；通过后会显示实际数据挂载和网络，密钥不会输出。
 
 本次恢复后的服务器应保留 `compose.recover-data.yaml`，其中同时声明原数据卷 `sub2pool_sub2pool-data` 和外部网络 `cpa_cpa`。可明确指定配置运行：
 
 ```bash
-./scripts/deploy-cpa.sh -p sub2pool \
+bash scripts/deploy.sh -p sub2pool \
   -f compose.yaml -f compose.recover-data.yaml
 ```
 
@@ -158,7 +158,7 @@ git pull --ff-only
 脚本依次执行：
 
 1. 核对现有容器与目标配置的项目名、所有数据挂载、网络、`DJANGO_SECRET_KEY`、数据目录及健康检查。`app.image` 必须为 `sub2pool-cpa:local`。手动加入的网络必须先写入 Compose；不一致时在拉取代码和停服前中止。如果其他运行中的容器也使用同一数据源，会拒绝发版，以免停写不完整导致备份不一致。
-2. `git pull --ff-only`，重新核对配置，保留旧镜像标签，再构建新镜像。此时旧容器继续服务。
+2. `git pull --ff-only` 拉取当前分支，重新核对配置，保留旧镜像标签，再沿用相同参数执行 `docker compose … build app` 构建新镜像。只有镜像覆盖、没有 Compose `build` 配置的旧部署保留本地源码构建方式。此时旧容器继续服务。
 3. 构建成功后再次核对配置和容器未被其他操作更改，然后停止原容器写入，复制整个 `/app/data`（包括 SQLite、WAL 和 CPA spool），检查备份数据库完整性。
 4. 仅替换 `app`，执行 `up -d --no-deps --no-build --pull never --wait --wait-timeout 300 app`；健康检查通过后再次核对实际挂载和网络，才报告成功。
 
