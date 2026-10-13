@@ -1,8 +1,10 @@
 """Dashboard and global participant-balance operations."""
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from decimal import Decimal
+from time import perf_counter
 from urllib.parse import urlsplit
 
 from django.http import Http404
@@ -32,6 +34,8 @@ from ..reporting import (
     iso,
     participant_data,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _admin_url(value: str) -> str:
@@ -124,6 +128,7 @@ class DashboardView(PageAccessAPIView):
     required_page_permissions = (PagePermission.DASHBOARD,)
 
     def get(self, request):
+        started = perf_counter()
         config = AppSettings.load()
         try:
             accounts, account = _selected_account(request)
@@ -299,7 +304,17 @@ class DashboardView(PageAccessAPIView):
                 ),
                 "model_diagnostics": observation.model_diagnostics,
             }
-        return ok(data)
+        elapsed = perf_counter() - started
+        if elapsed >= 2:
+            logger.warning(
+                "Slow dashboard calculation: %.3fs account_id=%s provider=%s",
+                elapsed,
+                account.id if account else None,
+                account.provider if account else None,
+            )
+        response = ok(data)
+        response["Server-Timing"] = f"dashboard;dur={elapsed * 1000:.1f}"
+        return response
 
 
 class ReadOnlyDashboardView(DashboardView):

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -20,8 +20,7 @@ from ..models import (
     Observation,
 )
 from .capacity_estimate import particle_capacity_estimate
-from .participants import coverage_data
-from .usage import cpa_event_cost
+from .summary_projection import SummaryProjection
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
@@ -59,20 +58,16 @@ class QuotaDiscrepancy:
     eligible_participant_ids: list[int]
 
 
-def _cycle_groups(account, now):
+def _cycle_groups(account, now, projection):
     groups = []
-    observations = (
-        Observation.objects.filter(
-            account_id=account.fact_key,
-            excluded_at__isnull=True,
-            observed_at__lte=now,
-            upstream_resets_at__isnull=False,
-            window_seconds__gt=0,
-        )
-        .exclude(exclusion_source="manual")
-        .order_by("observed_at", "id")
-    )
-    for observation in observations:
+    for observation in projection.observations(account):
+        if (
+            observation.excluded_at is not None
+            or observation.exclusion_source == "manual"
+            or not observation.upstream_resets_at
+            or not observation.window_seconds
+        ):
+            continue
         if not groups or not same_official_reset(
             groups[-1][-1].upstream_resets_at,
             observation.upstream_resets_at,
@@ -103,13 +98,14 @@ def _eligible_participants(account, start, end):
     return sorted(ids)
 
 
-def _calibrated_capacity(account, baseline):
-    for observation in Observation.objects.filter(
-        account_id=account.fact_key,
-        observed_at__lt=baseline.observed_at,
-        excluded_at__isnull=True,
-        valid_sample=True,
-    ).order_by("-observed_at", "-id"):
+def _calibrated_capacity(account, baseline, projection):
+    for observation in reversed(projection.observations(account)):
+        if (
+            observation.observed_at >= baseline.observed_at
+            or observation.excluded_at is not None
+            or not observation.valid_sample
+        ):
+            continue
         estimate = particle_capacity_estimate(observation)
         if (
             estimate
@@ -136,37 +132,31 @@ def _adjustments(account, start, end):
     return total, by_member
 
 
-def _request_cost(account, config, baseline, latest):
-    total = ZERO
-    unknown = 0
-    events = CPAUsageEvent.objects.filter(
-        account=account,
-        source="gpt_load",
-        occurred_at__gt=baseline.observed_at,
-        occurred_at__lte=latest.observed_at,
-    ).order_by("occurred_at", "id")
-    for event in events:
-        cost, is_unknown = cpa_event_cost(event, config)
-        total += cost
-        unknown += int(is_unknown)
-    return total, unknown
+def _request_cost(account, baseline, latest, projection):
+    return projection.ledger(account).totals(
+        baseline.observed_at, latest.observed_at,
+        include_start=False, gpt_load_only=True,
+    )
 
 
-def _discrepancy_for_group(account, group, config):
-    gpt_observations = [
-        row
-        for row in group
+def _gpt_observations(account, group):
+    return [
+        row for row in group
         if row.observed_at >= account.gpt_load_cutover_at
         and isinstance(row.raw_window, dict)
         and row.raw_window.get("provider") == "gpt_load"
     ]
+
+
+def _discrepancy_for_group(account, group, config, projection):
+    gpt_observations = _gpt_observations(account, group)
     if not gpt_observations:
         return None
     baseline, latest = gpt_observations[0], gpt_observations[-1]
     start = latest.upstream_resets_at - timedelta(seconds=latest.window_seconds)
     end = latest.upstream_resets_at
     reasons = []
-    capacity_observation, capacity = _calibrated_capacity(account, baseline)
+    capacity_observation, capacity = _calibrated_capacity(account, baseline, projection)
     if capacity is None:
         reasons.append("基线前没有已校准容量区间")
     if (
@@ -174,9 +164,9 @@ def _discrepancy_for_group(account, group, config):
         or account.gpt_load_logs_synced_through < latest.observed_at
     ):
         reasons.append("GPT-Load 请求日志尚未同步到额度观测")
-    if not coverage_data(account, baseline.observed_at, latest.observed_at)["complete"]:
+    if not projection.coverage(account, baseline.observed_at, latest.observed_at)["complete"]:
         reasons.append("证据窗口采集覆盖不完整")
-    request_cost, unknown = _request_cost(account, config, baseline, latest)
+    request_cost, unknown = _request_cost(account, baseline, latest, projection)
     if unknown:
         reasons.append(f"证据窗口有 {unknown} 条请求缺少模型价格")
     delta = max(ZERO, latest.upstream_used_percent - baseline.upstream_used_percent)
@@ -259,30 +249,36 @@ def _discrepancy_for_group(account, group, config):
     )
 
 
-def quota_discrepancies(account, config=None, now=None):
+def quota_discrepancies(account, config=None, now=None, *, projection=None):
     if account.provider != "gpt_load" or account.gpt_load_cutover_at is None:
         return []
     config = config or AppSettings.load()
     now = now or timezone.now()
+    projection = projection or SummaryProjection(config, now)
     return [
         result
-        for group in _cycle_groups(account, now)
-        if (result := _discrepancy_for_group(account, group, config)) is not None
+        for group in _cycle_groups(account, now, projection)
+        if (result := _discrepancy_for_group(account, group, config, projection)) is not None
     ]
 
 
-def current_quota_discrepancy(account, config=None, now=None):
+def current_quota_discrepancy(account, config=None, now=None, *, projection=None):
+    if account.provider != "gpt_load" or account.gpt_load_cutover_at is None:
+        return None
+    config = config or AppSettings.load()
     now = now or timezone.now()
-    return next(
-        (
-            row
-            for row in reversed(quota_discrepancies(account, config, now))
-            if datetime.fromisoformat(row.cycle_started_at)
-            <= now
-            < datetime.fromisoformat(row.cycle_ended_at)
-        ),
-        None,
-    )
+    projection = projection or SummaryProjection(config, now)
+    # Keep adjacent-observation reset tolerance and cutover baseline semantics,
+    # but do not calculate requests/coverage/adjustments for closed cycles.
+    for group in reversed(_cycle_groups(account, now, projection)):
+        observations = _gpt_observations(account, group)
+        if not observations:
+            continue
+        latest = observations[-1]
+        end = latest.upstream_resets_at
+        if end - timedelta(seconds=latest.window_seconds) <= now < end:
+            return _discrepancy_for_group(account, group, config, projection)
+    return None
 
 
 def public_discrepancy_data(discrepancy):

@@ -9,7 +9,6 @@ from django.utils import timezone
 from ..access import visible_accounts_for, visible_participant_ids
 from ..models import (
     AppSettings,
-    CPAUsageEvent,
     Observation,
     Participant,
     PoolParticipant,
@@ -17,9 +16,9 @@ from ..models import (
 from ..reporting.recommendations import _capacity_values
 from .account_owner import account_owner_data
 from .collector_state import get_collector_status
-from .participants import coverage_data, event_owner, owner_index
-from .quota_discrepancy import current_quota_discrepancy, public_discrepancy_data
-from .usage import cpa_event_cost
+from .participants import event_owner, owner_index
+from .quota_discrepancy import public_discrepancy_data
+from .summary_projection import SummaryProjection
 
 ZERO = Decimal("0")
 
@@ -36,7 +35,8 @@ def _totals():
     }
 
 
-def account_summary(account, config, now, bindings):
+def account_summary(account, config, now, bindings, *, projection=None):
+    projection = projection or SummaryProjection(config, now, bindings)
     # Raw official window facts remain usable even if their percentage cannot
     # participate in the model. Never fall back to an older week on exclusion.
     observation = (
@@ -59,25 +59,18 @@ def account_summary(account, config, now, bindings):
     summaries = defaultdict(_totals)
     total = _totals()
     latest_request_at = None
-    for event in (
-        CPAUsageEvent.objects.filter(
-            account=account, occurred_at__gte=start, occurred_at__lte=now
-        )
-        .order_by("occurred_at", "id")
-        .iterator(chunk_size=1000)
-    ):
+    for event, cost, unknown in projection.ledger(account).between(start, now):
         latest_request_at = event.occurred_at
-        cost, unknown = cpa_event_cost(event, config)
         for row in (summaries[event_owner(event, bindings)], total):
             row["usage_usd"] += cost
             row["request_usage_usd"] += cost
             row["request_count"] += 1
             row["token_count"] += event.total_tokens
             row["unpriced_request_count"] += int(unknown)
-    coverage = coverage_data(
+    coverage = projection.coverage(
         account, start, observation.observed_at if observation else now
     )
-    discrepancy = current_quota_discrepancy(account, config, now)
+    discrepancy = projection.discrepancy(account)
     if discrepancy is not None:
         for participant_id, value in discrepancy.member_adjustments.items():
             amount = Decimal(str(value))
@@ -104,6 +97,7 @@ def pool_summary(user, account, config=None):
     accounts = list(
         visible_accounts_for(user)
         .filter(provider=account.provider, pool_id=account.pool_id, enabled=True)
+        .select_related("pool")
         .order_by("id")
     )
     allocations = list(
@@ -119,6 +113,7 @@ def pool_summary(user, account, config=None):
         ).distinct():
             members.setdefault(participant.id, participant)
     bindings = owner_index()
+    projection = SummaryProjection(config, now, bindings)
     by_account = []
     rows = {
         pk: {
@@ -141,9 +136,9 @@ def pool_summary(user, account, config=None):
     unassigned = _totals()
     for selected in accounts:
         observation, start, totals, total, coverage, snapshots, latest_request_at = (
-            account_summary(selected, config, now, bindings)
+            projection.summary(selected)
         )
-        discrepancy = current_quota_discrepancy(selected, config, now)
+        discrepancy = projection.discrepancy(selected)
         observed_at = observation.observed_at if observation else None
         unavailable_reasons = []
         if not observation:
@@ -288,8 +283,8 @@ def pool_summary(user, account, config=None):
     from .billing import billing_summary, weekly_distribution
 
     return {
-        "weekly_distribution": weekly_distribution(accounts, members, config, now, bindings),
-        "billing_summary": billing_summary(user, account, config, now, bindings, members),
+        "weekly_distribution": weekly_distribution(accounts, members, config, now, bindings, projection=projection),
+        "billing_summary": billing_summary(user, account, config, now, bindings, members, projection=projection),
         "pool_id": account.pool_id,
         "pool_name": account.pool.name,
         "selected_account_id": account.id,

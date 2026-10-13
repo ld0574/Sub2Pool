@@ -174,12 +174,19 @@ def unbind_key(binding_id):
         return binding
 
 
-def coverage_data(account, started_at, ended_at):
-    intervals = list(
-        account.cpa_collection_intervals.filter(connected_at__lte=ended_at)
-        .filter(Q(disconnected_at__isnull=True) | Q(disconnected_at__gte=started_at))
-        .order_by("connected_at", "id")
-    )
+def coverage_data(account, started_at, ended_at, *, intervals=None):
+    if intervals is None:
+        intervals = list(
+            account.cpa_collection_intervals.filter(connected_at__lte=ended_at)
+            .filter(Q(disconnected_at__isnull=True) | Q(disconnected_at__gte=started_at))
+            .order_by("connected_at", "id")
+        )
+    else:
+        intervals = [
+            row for row in intervals
+            if row.connected_at <= ended_at
+            and (row.disconnected_at is None or row.disconnected_at >= started_at)
+        ]
     cursor = started_at
     gaps = []
     for interval in intervals:

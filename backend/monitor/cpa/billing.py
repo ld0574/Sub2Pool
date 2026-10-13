@@ -1,6 +1,5 @@
 """Read-time, replayable billing projections. Never writes source facts or balances."""
 
-from bisect import bisect_left, bisect_right
 from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -13,12 +12,12 @@ from django.db.models import Q
 
 from ..access import visible_accounts_for
 from ..accounting.boundaries import same_official_reset
-from ..models import CPAQuotaAdjustment, CPAUsageEvent, Observation
+from ..models import CPAQuotaAdjustment
 from ..reporting.recommendations import _capacity_values
 from .capacity_estimate import particle_capacity_estimate
-from .participants import coverage_data, event_owner
-from .quota_discrepancy import current_quota_discrepancy, public_discrepancy_data
-from .usage import cpa_event_cost
+from .participants import event_owner
+from .quota_discrepancy import public_discrepancy_data
+from .summary_projection import SummaryProjection
 
 ZERO = Decimal(0)
 
@@ -57,12 +56,11 @@ def fraction(start, end, left, right):
     ) / Decimal(str((end - start).total_seconds()))
 
 
-def cycle_rows(account, config, now):
+def cycle_rows(account, config, now, *, projection=None):
+    projection = projection or SummaryProjection(config, now)
     groups = []
-    for obs in Observation.objects.filter(
-        account_id=account.fact_key, excluded_at__isnull=True, observed_at__lte=now
-    ).order_by("observed_at", "id"):
-        if not obs.upstream_resets_at or not obs.window_seconds:
+    for obs in projection.observations(account):
+        if obs.excluded_at is not None or not obs.upstream_resets_at or not obs.window_seconds:
             continue
         if not groups or not same_official_reset(
             groups[-1][-1].upstream_resets_at, obs.upstream_resets_at
@@ -74,23 +72,6 @@ def cycle_rows(account, config, now):
         latest = group[-1]
         start = latest.upstream_resets_at - timedelta(seconds=latest.window_seconds)
         reliable = None
-        # Prefix sums price each request once per cycle, even when many stale
-        # observations are skipped after a late event or a catalog adjustment.
-        times, amounts, unknowns = [], [ZERO], [0]
-        if any(o.valid_sample or particle_capacity_estimate(o) for o in group):
-            for event in (
-                CPAUsageEvent.objects.filter(
-                    account=account,
-                    occurred_at__gte=start,
-                    occurred_at__lte=latest.observed_at,
-                )
-                .order_by("occurred_at", "id")
-                .iterator(chunk_size=1000)
-            ):
-                cost, unknown = cpa_event_cost(event, config)
-                times.append(event.occurred_at)
-                amounts.append(amounts[-1] + cost)
-                unknowns.append(unknowns[-1] + int(unknown))
         details = None
         for obs in reversed(group):
             posterior = particle_capacity_estimate(obs)
@@ -99,8 +80,8 @@ def cycle_rows(account, config, now):
                 and obs.interval_used_percent == obs.upstream_used_percent
             ):
                 continue
-            index = bisect_right(times, obs.observed_at)
-            base = 0
+            ledger = projection.ledger(account)
+            cost, unknown = ledger.totals(start, obs.observed_at)
             if posterior and obs.attribution_started_at:
                 reason = obs.raw_window.get("replay_segment_reason")
                 observed_baseline = (
@@ -113,11 +94,14 @@ def cycle_rows(account, config, now):
                     }
                     or obs.interval_used_percent != obs.upstream_used_percent
                 )
-                base = (bisect_right if observed_baseline else bisect_left)(
-                    times, obs.attribution_started_at
+                baseline_cost, baseline_unknown = ledger.totals(
+                    start, min(obs.attribution_started_at, latest.observed_at),
+                    include_end=observed_baseline or obs.attribution_started_at > latest.observed_at,
                 )
-            if unknowns[index] - unknowns[base] or abs(
-                amounts[index] - amounts[base] - obs.selected_total_cost
+                cost -= baseline_cost
+                unknown -= baseline_unknown
+            if unknown or abs(
+                cost - obs.selected_total_cost
             ) > Decimal("0.00001"):
                 continue
             if posterior and config.weekly_quota_model != "constant_average":
@@ -130,7 +114,7 @@ def cycle_rows(account, config, now):
                     # The average model also uses only the valid connected segment.
                     if not obs.valid_sample or obs.interval_used_percent <= 0:
                         continue
-                elif not coverage_data(account, start, obs.observed_at)["complete"]:
+                elif not projection.coverage(account, start, obs.observed_at)["complete"]:
                     continue
                 snap = SimpleNamespace(
                     observation=obs,
@@ -171,7 +155,8 @@ def contract_at(contracts, at):
     return next((c for c in reversed(contracts) if c.effective_at <= at), None)
 
 
-def billing_summary(user, account, config, now, bindings, members):
+def billing_summary(user, account, config, now, bindings, members, *, projection=None):
+    projection = projection or SummaryProjection(config, now, bindings)
     pool = account.pool
     result = dict(
         configured=bool(pool.cpa_billing_anchor),
@@ -207,6 +192,7 @@ def billing_summary(user, account, config, now, bindings, members):
         visible_accounts_for(user)
         .filter(provider=account.provider)
         .filter(Q(pool=pool) | Q(cpa_contracts__pool_id_at_capture=pool.id))
+        .select_related("pool")
         .distinct()
     )
     usage = defaultdict(lambda: ZERO)
@@ -223,7 +209,7 @@ def billing_summary(user, account, config, now, bindings, members):
     reasons = set()
     for selected in accounts:
         contracts = list(selected.cpa_contracts.order_by("effective_at", "id"))
-        cycles = cycle_rows(selected, config, now)
+        cycles = projection.cycles(selected)
         adjustments = list(
             CPAQuotaAdjustment.objects.filter(
                 account=selected,
@@ -231,14 +217,9 @@ def billing_summary(user, account, config, now, bindings, members):
             ).order_by("effective_at", "created_at", "id")
         )
         event_start = min([start, *[r["start"] for r in cycles if r["end"] > start]])
-        events = list(
-            CPAUsageEvent.objects.filter(
-                account=selected,
-                occurred_at__gte=event_start,
-                occurred_at__lt=min(now, end),
-            ).order_by("occurred_at", "id")
-        )
-        costs = [(e, *cpa_event_cost(e, config)) for e in events]
+        costs = list(projection.ledger(selected).between(
+            event_start, min(now, end), include_end=False,
+        ))
         current = next(
             (r for r in reversed(cycles) if r["start"] <= now < r["end"]), None
         )
@@ -333,7 +314,7 @@ def billing_summary(user, account, config, now, bindings, members):
                 if row["observation"].observed_at > row["end"]:
                     capacity_known = False
                     row_reasons.append("周期边界与观测时间冲突")
-                if not coverage_data(selected, row["start"], min(row["end"], now))[
+                if not projection.coverage(selected, row["start"], min(row["end"], now))[
                     "complete"
                 ]:
                     row_reasons.append("采集覆盖不完整")
@@ -481,7 +462,7 @@ def billing_summary(user, account, config, now, bindings, members):
             manual_adjustment[adjustment.participant_id] += adjustment.amount_usd
             if adjustment.cycle_ended_at <= now:
                 completed_usage[adjustment.participant_id] += adjustment.amount_usd
-        discrepancy = current_quota_discrepancy(selected, config, now)
+        discrepancy = projection.discrepancy(selected)
         if discrepancy is not None and start <= now < end:
             for participant_id, value in discrepancy.member_holds.items():
                 held_unexplained[participant_id] += Decimal(str(value))
@@ -559,16 +540,14 @@ def billing_summary(user, account, config, now, bindings, members):
     return result
 
 
-def weekly_distribution(accounts, members, config, now, bindings):
-    from .reporting import account_summary
+def weekly_distribution(accounts, members, config, now, bindings, *, projection=None):
+    projection = projection or SummaryProjection(config, now, bindings)
 
     output = []
     for account in accounts:
-        obs, start, usage, total, coverage, _, latest_request = account_summary(
-            account, config, now, bindings
-        )
-        discrepancy = current_quota_discrepancy(account, config, now)
-        cycles = cycle_rows(account, config, now)
+        obs, start, usage, total, coverage, _, latest_request = projection.summary(account)
+        discrepancy = projection.discrepancy(account)
+        cycles = projection.cycles(account)
         current = next(
             (r for r in reversed(cycles) if r["start"] <= now < r["end"]), None
         )
@@ -581,7 +560,7 @@ def weekly_distribution(accounts, members, config, now, bindings):
         )
         complete = bool(
             current
-            and coverage_data(account, current["start"], now)["complete"]
+            and projection.coverage(account, current["start"], now)["complete"]
             and not total["unpriced_request_count"]
         )
         output.append(
