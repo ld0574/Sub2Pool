@@ -10,6 +10,7 @@ import type {
 } from "@/types/cpa";
 import { formatCurrency } from "@/utils/formatters";
 import { useDateTime } from "@/composables/useDateTime";
+import CPAQuotaAdjustmentHistory from "./CPAQuotaAdjustmentHistory.vue";
 
 const props = defineProps<{
   account: {
@@ -29,7 +30,6 @@ const selectedObservationId = ref<number | null>(null);
 const participantId = ref<number | null>(null);
 const amount = ref<number>(0);
 const reason = ref("");
-const reverseReason = ref("");
 const plan = ref<CPAQuotaAdjustmentPlan | null>(null);
 
 const selectedCycle = computed<CPAQuotaDiscrepancyAudit | null>(
@@ -131,8 +131,8 @@ async function apply() {
   }
 }
 
-async function reverse(id: string) {
-  if (!reverseReason.value.trim()) {
+async function reverse(id: string, reverseReason: string) {
+  if (!reverseReason.trim()) {
     message.value = "请先填写撤销原因。";
     return;
   }
@@ -140,9 +140,8 @@ async function reverse(id: string) {
   try {
     await api(`cpa/quota-adjustments/${id}/reverse`, {
       method: "POST",
-      body: jsonBody({ reason: reverseReason.value }),
+      body: jsonBody({ reason: reverseReason }),
     });
-    reverseReason.value = "";
     message.value = "已追加反向记录。";
     await load();
     emit("refresh");
@@ -329,40 +328,12 @@ async function reverse(id: string) {
           </button>
         </div>
 
-        <section
+        <CPAQuotaAdjustmentHistory
           v-if="adminData.adjustments.length"
-          class="border-t border-base-300 pt-4"
-        >
-          <h4 class="font-semibold">调整历史</h4>
-          <input
-            v-model="reverseReason"
-            class="input mt-2 w-full input-sm"
-            maxlength="500"
-            placeholder="撤销前填写原因"
-          />
-          <div class="mt-2 space-y-2">
-            <div
-              v-for="row in adminData.adjustments"
-              :key="row.id"
-              class="rounded-box border border-base-300 p-3 text-sm"
-            >
-              <p>
-                {{ row.participant_name }} ·
-                {{ formatCurrency(row.amount_usd) }} ·
-                {{ formatTime(row.created_at) }}
-              </p>
-              <p class="text-xs text-base-content/60">{{ row.reason }}</p>
-              <button
-                v-if="row.amount_usd > 0 && !row.reversed"
-                class="btn mt-2 btn-ghost btn-xs"
-                :disabled="loading"
-                @click="reverse(row.id)"
-              >
-                追加反向记录
-              </button>
-            </div>
-          </div>
-        </section>
+          :adjustments="adminData.adjustments"
+          :selected-cycle="selectedCycle"
+          @reverse="reverse"
+        />
       </div>
       <div class="modal-action">
         <button class="btn" :disabled="loading" @click="dialog?.close()">
