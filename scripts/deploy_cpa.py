@@ -23,14 +23,35 @@ class DeploymentError(Exception):
     pass
 
 
+class CommandError(DeploymentError):
+    def __init__(self, args, stderr):
+        self.stderr = (stderr or "").strip()
+        super().__init__(f"命令失败：{shlex.join(args)}" +
+                         (f"\n{self.stderr}" if self.stderr else ""))
+
+
 def run(*args, capture=True):
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None,
                             stderr=subprocess.PIPE if capture else None)
     if result.returncode:
         # Never print captured stdout: Compose config / inspect contain credentials.
-        detail = (result.stderr or "").strip()
-        raise DeploymentError(f"命令失败：{shlex.join(args)}" + (f"\n{detail}" if detail else ""))
+        raise CommandError(args, result.stderr)
     return result.stdout.strip() if capture else ""
+
+
+def preserve_previous_image(image_id, rollback_tag):
+    try:
+        run("docker", "image", "tag", image_id, rollback_tag)
+    except CommandError as error:
+        missing = f"No such image: {image_id}"
+        if error.stderr not in (missing, f"Error response from daemon: {missing}"):
+            raise
+        # A running container can outlive its image metadata. Do not substitute
+        # the current image name: that tag may already refer to newer code.
+        print("警告：旧容器的镜像已不在本地镜像库中，无法保留旧镜像回退；"
+              "仍会完整备份数据，再构建并更新 app。", flush=True)
+        return None
+    return rollback_tag
 
 
 def inspect_container(container_id):
@@ -162,8 +183,10 @@ def deploy(repo, options, check_only=False):
 
         # Keep the running image addressable even after the local tag is rebuilt.
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-        rollback_image = f"sub2pool-cpa:before-{timestamp}"
-        run("docker", "image", "tag", old["Image"], rollback_image)
+        stage = "保留旧镜像"
+        rollback_image = preserve_previous_image(
+            old["Image"], f"sub2pool-cpa:before-{timestamp}",
+        )
         stage = "构建新镜像（旧服务继续运行）"
         print(f"[2/5] {stage}", flush=True)
         if config["services"]["app"].get("build"):
@@ -190,7 +213,13 @@ def deploy(repo, options, check_only=False):
         print(f"备份目录：{backup}（包含密钥配置，请勿公开）", flush=True)
         write_json(backup / "container.json", current)
         write_json(backup / "compose.resolved.json", config)
-        (backup / "previous-image.txt").write_text(rollback_image + "\n")
+        write_json(backup / "previous-image.json", {
+            "source_image_id": old["Image"],
+            "rollback_tag": rollback_image,
+            "available": rollback_image is not None,
+        })
+        if rollback_image:
+            (backup / "previous-image.txt").write_text(rollback_image + "\n")
         data_path = backup / "data"
         data_path.mkdir(mode=0o700)
         stopped = True
@@ -217,7 +246,8 @@ def deploy(repo, options, check_only=False):
         if new.get("State", {}).get("Health", {}).get("Status") != "healthy":
             raise DeploymentError("新容器尚未健康。")
         run(*compose, "ps", "app", capture=False)
-        print(f"发版成功。备份：{backup}\n旧镜像：{rollback_image}", flush=True)
+        image_status = rollback_image or "不可用（旧镜像缺失，已保留完整数据备份）"
+        print(f"发版成功。备份：{backup}\n旧镜像：{image_status}", flush=True)
         return 0
     except (DeploymentError, OSError, ValueError, sqlite3.Error, KeyboardInterrupt) as error:
         print(f"\n发版未完成：{stage}\n{error}", file=sys.stderr)

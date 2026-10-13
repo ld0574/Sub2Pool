@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -57,6 +58,7 @@ class DeploymentTests(unittest.TestCase):
         self.commands = []
         self.new = None
         self.failure = None
+        self.image_tag_error = None
         self.on_pull = lambda: None
         self.on_build = lambda: None
         self.on_up = lambda: None
@@ -85,6 +87,8 @@ class DeploymentTests(unittest.TestCase):
                 lookup[self.new["Id"]] = self.new
             return json.dumps([lookup[i] for i in args[2:]])
         if args[:3] == ("docker", "image", "tag"):
+            if self.image_tag_error:
+                raise deploy.CommandError(args, self.image_tag_error)
             return ""
         if args[:2] == ("docker", "build"):
             if self.failure == "build":
@@ -179,6 +183,75 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((backup / "data/cpa-spool/pending.json").is_file())
         self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
         self.assertEqual((backup / "compose.resolved.json").stat().st_mode & 0o777, 0o600)
+
+    def test_available_previous_image_is_recorded_for_rollback(self):
+        result, output = self.execute()
+        self.assertEqual(result, 0, output)
+        backup = next(self.repo.parent.glob("sub2pool-backups/*"))
+        tag = next(command[-1] for command in self.commands
+                   if command[:3] == ("docker", "image", "tag"))
+        self.assertEqual((backup / "previous-image.txt").read_text(), tag + "\n")
+        self.assertEqual(json.loads((backup / "previous-image.json").read_text()), {
+            "source_image_id": self.old["Image"], "rollback_tag": tag, "available": True,
+        })
+
+    def test_missing_previous_image_warns_but_keeps_backup_and_upgrade(self):
+        self.branch = "gpt-load"
+        self.image_tag_error = f"Error response from daemon: No such image: {self.old['Image']}"
+        result, output = self.execute()
+        self.assertEqual(result, 0, output)
+        self.assertIn("无法保留旧镜像回退", output)
+        self.assertIn("旧镜像：不可用", output)
+        self.assertNotIn("旧镜像：None", output)
+        ops = self.operations()
+        self.assertLess(ops.index("build"), ops.index("stop"))
+        self.assertLess(ops.index("stop"), ops.index("cp"))
+        backup = next(self.repo.parent.glob("sub2pool-backups/*"))
+        self.assertTrue((backup / "BACKUP_COMPLETE").is_file())
+        self.assertTrue((backup / "data/cpa-spool/pending.json").is_file())
+        self.assertFalse((backup / "previous-image.txt").exists())
+        self.assertEqual(json.loads((backup / "previous-image.json").read_text()), {
+            "source_image_id": self.old["Image"], "rollback_tag": None, "available": False,
+        })
+
+    def test_missing_previous_image_does_not_make_build_failure_stop_service(self):
+        self.image_tag_error = f"No such image: {self.old['Image']}"
+        self.failure = "build"
+        result, output = self.execute()
+        self.assertEqual(result, 1, output)
+        self.assert_service_untouched()
+        self.assertTrue(self.old["State"]["Running"])
+
+    def test_missing_previous_image_does_not_bypass_failed_backup(self):
+        self.image_tag_error = f"No such image: {self.old['Image']}"
+        self.failure = "backup"
+        result, output = self.execute()
+        self.assertEqual(result, 1, output)
+        self.assertIn(("docker", "start", "old-id"), self.commands)
+        self.assertFalse(any("up" in command for command in self.commands))
+        self.assertFalse(list(self.repo.parent.glob("sub2pool-backups/*/BACKUP_COMPLETE")))
+
+    def test_other_image_tag_errors_abort_without_build_or_stop(self):
+        for error in ("permission denied", "Cannot connect to the Docker daemon",
+                      "Error response from daemon: No such image: sha256:different-image"):
+            with self.subTest(error=error):
+                self.image_tag_error = error
+                self.commands = []
+                result, output = self.execute()
+                self.assertEqual(result, 1, output)
+                self.assertIn("发版未完成：保留旧镜像", output)
+                self.assertNotIn("build", self.operations())
+                self.assert_service_untouched()
+
+    def test_command_failure_keeps_stderr_without_printing_captured_secrets(self):
+        args = ("docker", "image", "tag", "sha256:missing", "backup:before")
+        result = subprocess.CompletedProcess(args, 1, stdout=self.secret,
+                                             stderr="No such image: sha256:missing\n")
+        with patch.object(deploy.subprocess, "run", return_value=result):
+            with self.assertRaises(deploy.CommandError) as raised:
+                deploy.run(*args)
+        self.assertEqual(raised.exception.stderr, "No such image: sha256:missing")
+        self.assertNotIn(self.secret, str(raised.exception))
 
     def test_gpt_load_branch_uses_compose_build_and_up_with_original_options(self):
         self.branch = "gpt-load"
