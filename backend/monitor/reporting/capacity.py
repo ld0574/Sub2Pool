@@ -14,6 +14,18 @@ def money(value: Decimal) -> float:
     return float(value.quantize(Decimal("0.01")))
 
 
+def _capacity_observations(account):
+    rows = Observation.objects.filter(account_id=account.fact_key)
+    if account.provider in {"cpa", "gpt_load"}:
+        # These providers have no Sub2API correction facts. Never deserialize
+        # large upstream bodies/model diagnostics for endpoint-ratio charts.
+        rows = rows.only(
+            "id", "account_id", "observed_at", "attribution_started_at",
+            "upstream_resets_at", "interval_used_percent", "selected_total_cost",
+        )
+    return rows
+
+
 def closing_basis(
     observation: Observation,
     rate_rows: list[Observation],
@@ -128,8 +140,7 @@ def capacity_summary(
         "reason": "尚无当前上游周期，无法形成今日估算",
     }
     latest = (
-        Observation.objects.filter(
-            account_id=account.fact_key,
+        _capacity_observations(account).filter(
             excluded_at__isnull=True,
             attribution_started_at__isnull=False,
         )
@@ -139,8 +150,7 @@ def capacity_summary(
     if latest is None:
         return {"cycle": None, "today": empty_today}
 
-    observations = Observation.objects.filter(
-        account_id=latest.account_id,
+    observations = _capacity_observations(account).filter(
         attribution_started_at=latest.attribution_started_at,
         excluded_at__isnull=True,
     )
@@ -273,8 +283,7 @@ def capacity_series(
         tzinfo=location,
     )
     observation_rows = list(
-        Observation.objects.filter(
-            account_id=account.fact_key,
+        _capacity_observations(account).filter(
             excluded_at__isnull=True,
             observed_at__gte=capacity_start,
         ).order_by("observed_at", "id")

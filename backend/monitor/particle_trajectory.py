@@ -14,6 +14,7 @@ from .accounting.model_inputs import (
     stable_segment_seed,
 )
 from .accounting.particle_filter import ParticleFilterConfig
+from .accounting.trajectory_cache import cached_replay
 from .fast_correction.prefix import FastCorrectionPrefix
 from .models import AppSettings, MonitoredAccount, Observation
 from .reporting import iso
@@ -283,11 +284,14 @@ def particle_trajectory_data(
         initial_capacity_usd=_initial_capacity(segment),
     )
     range_profile = account.resolved_capacity_profile
-    adaptive = run_adaptive_range_filter(
+    adaptive = cached_replay(
         replay_input.model_input,
+        account_id=account.fact_key,
+        algorithm=ALGORITHM_VERSION,
         seed=seed,
         config=filter_config,
         capacity_profile=range_profile,
+        compute=run_adaptive_range_filter,
     )
     particle = adaptive.particle
 

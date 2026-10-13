@@ -130,7 +130,17 @@ X_FRAME_OPTIONS = "DENY"
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # 单进程部署下用内存缓存做登录失败节流；业务状态全部保存在 SQLite，不引入 Redis。
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "pinche-auth"}}
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "pinche-auth"},
+    # Separate from login throttling: at most four 8 MiB numerical artifacts
+    # per worker, expiring after ten minutes. Responses/permissions are not cached.
+    "trajectory": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "pinche-trajectory",
+        "TIMEOUT": 600,
+        "OPTIONS": {"MAX_ENTRIES": 4, "CULL_FREQUENCY": 1},
+    },
+}
 LOGIN_FAILURE_LIMIT = int(os.environ.get("LOGIN_FAILURE_LIMIT", "5"))
 LOGIN_FAILURE_WINDOW_SECONDS = int(os.environ.get("LOGIN_FAILURE_WINDOW_SECONDS", "600"))
 

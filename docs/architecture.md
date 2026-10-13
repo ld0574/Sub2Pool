@@ -50,6 +50,7 @@ CPA usage 订阅 ───┼─> 采样证据 ─> 区间识别 ─> 账本重�
 
 ## 相关文档
 
+- [页面读取性能](read-performance.md)
 - [数据与重放](data-and-replay.md)
 - [统计口径](statistics.md)
 - [额度模型](quota-models.md)

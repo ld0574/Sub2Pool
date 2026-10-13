@@ -454,9 +454,10 @@ class CPARequestsView(CPAReadView):
             events = events.filter(model=params["model"])
         if "failed" in params:
             events = events.filter(failed=params["failed"])
-        count = events.count()
         offset = (params["page"] - 1) * params["page_size"]
         config = AppSettings.load()
+        summary = request_summary(events, config) if params["include_summary"] else None
+        count = summary["request_count"] if summary is not None else events.count()
         rows = []
         for event in events.order_by("-occurred_at", "-id")[
             offset : offset + params["page_size"]
@@ -496,7 +497,7 @@ class CPARequestsView(CPAReadView):
                 "account_id": account.id,
                 "items": rows,
                 "total": count,
-                "summary": request_summary(events, config) if params["include_summary"] else None,
+                "summary": summary,
                 "started_at": params["started_at"].isoformat(),
                 "ended_at": params["ended_at"].isoformat(),
                 "page": params["page"],

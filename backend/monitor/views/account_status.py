@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Avg, Count, Sum
 from django.utils import timezone
 
 from .base import PageAccessAPIView, ok
@@ -12,7 +11,7 @@ from ..billing_correction.domain import CorrectionAmounts
 from ..billing_correction.observations import interval_corrections
 from ..api_auth import APIKeyAuthentication
 from ..cpa.quota_status import quota_detail
-from ..cpa.usage import cpa_events_cost
+from ..cpa.usage_rollup import UsageWindow, request_summaries
 from ..integrations.cpa import CPAClient, CPAError
 from ..integrations.gpt_load import GPTLoadClient, GPTLoadError
 from ..integrations.sub2api import Sub2APIClient, Sub2APIError, WeeklyWindow
@@ -95,29 +94,55 @@ def _fallback_usage(
     }
 
 
-def _cpa_event_totals(
-    config: AppSettings,
-    events,
-) -> dict[str, Any]:
-    totals = events.aggregate(
-        request_count=Count("id"),
-        token_count=Sum("total_tokens"),
-        avg_duration_ms=Avg("latency_ms"),
-    )
-    account_cost, _unknown_count = cpa_events_cost(
-        events.iterator(chunk_size=1000),
-        config,
-    )
-    return {
-        "request_count": int(totals["request_count"] or 0),
-        "token_count": int(totals["token_count"] or 0),
-        "account_cost_usd": float(account_cost),
-        "avg_duration_ms": (
-            float(totals["avg_duration_ms"])
-            if totals["avg_duration_ms"] is not None
-            else None
+def _request_status_stats(config, account, sampled_at, cycle_start=None):
+    """Calculate all overlapping windows in one scan, pricing CPA only once."""
+    started_at = sampled_at - timedelta(days=STATS_DAYS)
+    windows = {
+        "history": UsageWindow(start=started_at, end=sampled_at, count_days=True),
+        "today": UsageWindow(
+            start=started_at, end=sampled_at, local_date=sampled_at.date(),
         ),
     }
+    if cycle_start is not None:
+        windows["cycle"] = UsageWindow(start=cycle_start, end=sampled_at)
+    events = CPAUsageEvent.objects.filter(
+        account=account,
+        occurred_at__gte=(
+            min(started_at, cycle_start) if cycle_start is not None else started_at
+        ),
+        occurred_at__lte=sampled_at,
+    )
+    summaries = request_summaries(events, config, windows)
+    totals, today = summaries["history"], summaries["today"]
+    actual_days = totals["actual_days"]
+    divisor = max(1, actual_days)
+    stats = {
+        "days": STATS_DAYS,
+        "actual_days_used": actual_days,
+        "account_cost_usd": totals["usage_usd"],
+        **{
+            field: None for field in (
+                "correction_total_usd", "long_context_correction_usd",
+                "model_correction_usd", "account_cost_with_correction_usd",
+                "fast_correction_usd", "account_cost_with_fast_correction_usd",
+                "standard_cost_usd", "user_cost_usd",
+            )
+        },
+        "request_count": totals["request_count"],
+        "token_count": totals["total_tokens"],
+        "avg_daily_cost_usd": totals["usage_usd"] / divisor,
+        "avg_daily_request_count": totals["request_count"] / divisor,
+        "avg_daily_token_count": totals["total_tokens"] / divisor,
+        "avg_duration_ms": totals["all_average_latency_ms"],
+        "today": {
+            "date": sampled_at.date().isoformat(),
+            "account_cost_usd": today["usage_usd"],
+            "user_cost_usd": None,
+            "request_count": today["request_count"],
+            "token_count": today["total_tokens"],
+        },
+    }
+    return summaries.get("cycle"), stats
 
 
 def _cpa_status_rows(
@@ -177,6 +202,7 @@ def _cpa_status_rows(
                     "error_message": upstream["status_message"] or None,
                 }
             window = None
+            cycle_start = None
             client.last_usage_body = None
             try:
                 window = client.query_weekly_window(account.cpa_auth_index or "")
@@ -184,13 +210,16 @@ def _cpa_status_rows(
                     window.reset_at,
                     tz=UTC,
                 )
-                cycle_start = reset_at - timedelta(seconds=window.window_seconds)
-                cycle_events = CPAUsageEvent.objects.filter(
-                    account=account,
-                    occurred_at__gte=max(cycle_start, account.created_at),
-                    occurred_at__lte=sampled_at,
+                cycle_start = max(
+                    reset_at - timedelta(seconds=window.window_seconds), account.created_at,
                 )
-                totals = _cpa_event_totals(config, cycle_events)
+            except CPAError as exc:
+                row["warnings"].append(f"额度状态：{exc}")
+
+            totals, row["stats"] = _request_status_stats(
+                config, account, sampled_at, cycle_start,
+            )
+            if window is not None:
                 row["usage"] = {
                     "source": "cpa_direct",
                     "updated_at": window.sampled_at,
@@ -200,8 +229,8 @@ def _cpa_status_rows(
                         "reset_at": reset_at.isoformat(),
                         "remaining_seconds": window.reset_after_seconds,
                         "request_count": totals["request_count"],
-                        "token_count": totals["token_count"],
-                        "account_cost_usd": totals["account_cost_usd"],
+                        "token_count": totals["total_tokens"],
+                        "account_cost_usd": totals["usage_usd"],
                         "standard_cost_usd": None,
                         "user_cost_usd": None,
                     },
@@ -211,49 +240,9 @@ def _cpa_status_rows(
                     "error_code": None,
                     "error": None,
                 }
-            except CPAError as exc:
-                row["warnings"].append(f"额度状态：{exc}")
-
             row["cpa_quota"] = quota_detail(
                 account, config, sampled_at, client.last_usage_body, window
             )
-            started_at = sampled_at - timedelta(days=STATS_DAYS)
-            events = CPAUsageEvent.objects.filter(
-                account=account,
-                occurred_at__gte=started_at,
-                occurred_at__lte=sampled_at,
-            )
-            totals = _cpa_event_totals(config, events)
-            actual_days = events.dates("occurred_at", "day").count()
-            today_events = events.filter(occurred_at__date=sampled_at.date())
-            today = _cpa_event_totals(config, today_events)
-            divisor = max(1, actual_days)
-            row["stats"] = {
-                "days": STATS_DAYS,
-                "actual_days_used": actual_days,
-                "account_cost_usd": totals["account_cost_usd"],
-                "correction_total_usd": None,
-                "long_context_correction_usd": None,
-                "model_correction_usd": None,
-                "account_cost_with_correction_usd": None,
-                "fast_correction_usd": None,
-                "account_cost_with_fast_correction_usd": None,
-                "standard_cost_usd": None,
-                "user_cost_usd": None,
-                "request_count": totals["request_count"],
-                "token_count": totals["token_count"],
-                "avg_daily_cost_usd": totals["account_cost_usd"] / divisor,
-                "avg_daily_request_count": totals["request_count"] / divisor,
-                "avg_daily_token_count": totals["token_count"] / divisor,
-                "avg_duration_ms": totals["avg_duration_ms"],
-                "today": {
-                    "date": sampled_at.date().isoformat(),
-                    "account_cost_usd": today["account_cost_usd"],
-                    "user_cost_usd": None,
-                    "request_count": today["request_count"],
-                    "token_count": today["token_count"],
-                },
-            }
     return None
 
 
@@ -307,6 +296,8 @@ def _gpt_load_status_rows(
                     "temp_unschedulable_reason": None,
                     "error_message": None,
                 }
+            window = None
+            cycle_start = None
             try:
                 window = client.query_weekly_window(
                     account.gpt_load_group_id,
@@ -314,12 +305,13 @@ def _gpt_load_status_rows(
                 )
                 reset_at = datetime.fromtimestamp(window.reset_at, tz=UTC)
                 cycle_start = reset_at - timedelta(seconds=window.window_seconds)
-                events = CPAUsageEvent.objects.filter(
-                    account=account,
-                    occurred_at__gte=cycle_start,
-                    occurred_at__lte=sampled_at,
-                )
-                totals = _cpa_event_totals(config, events)
+            except GPTLoadError as exc:
+                row["warnings"].append(f"额度状态：{exc}")
+
+            totals, row["stats"] = _request_status_stats(
+                config, account, sampled_at, cycle_start,
+            )
+            if window is not None:
                 row["usage"] = {
                     "source": "gpt_load",
                     "updated_at": window.sampled_at,
@@ -329,8 +321,8 @@ def _gpt_load_status_rows(
                         "reset_at": reset_at.isoformat(),
                         "remaining_seconds": window.reset_after_seconds,
                         "request_count": totals["request_count"],
-                        "token_count": totals["token_count"],
-                        "account_cost_usd": totals["account_cost_usd"],
+                        "token_count": totals["total_tokens"],
+                        "account_cost_usd": totals["usage_usd"],
                         "standard_cost_usd": None,
                         "user_cost_usd": None,
                     },
@@ -340,48 +332,6 @@ def _gpt_load_status_rows(
                     "error_code": None,
                     "error": None,
                 }
-            except GPTLoadError as exc:
-                row["warnings"].append(f"额度状态：{exc}")
-
-            started_at = sampled_at - timedelta(days=STATS_DAYS)
-            events = CPAUsageEvent.objects.filter(
-                account=account,
-                occurred_at__gte=started_at,
-                occurred_at__lte=sampled_at,
-            )
-            totals = _cpa_event_totals(config, events)
-            actual_days = events.dates("occurred_at", "day").count()
-            today = _cpa_event_totals(
-                config,
-                events.filter(occurred_at__date=sampled_at.date()),
-            )
-            divisor = max(1, actual_days)
-            row["stats"] = {
-                "days": STATS_DAYS,
-                "actual_days_used": actual_days,
-                "account_cost_usd": totals["account_cost_usd"],
-                "correction_total_usd": None,
-                "long_context_correction_usd": None,
-                "model_correction_usd": None,
-                "account_cost_with_correction_usd": None,
-                "fast_correction_usd": None,
-                "account_cost_with_fast_correction_usd": None,
-                "standard_cost_usd": None,
-                "user_cost_usd": None,
-                "request_count": totals["request_count"],
-                "token_count": totals["token_count"],
-                "avg_daily_cost_usd": totals["account_cost_usd"] / divisor,
-                "avg_daily_request_count": totals["request_count"] / divisor,
-                "avg_daily_token_count": totals["token_count"] / divisor,
-                "avg_duration_ms": totals["avg_duration_ms"],
-                "today": {
-                    "date": sampled_at.date().isoformat(),
-                    "account_cost_usd": today["account_cost_usd"],
-                    "user_cost_usd": None,
-                    "request_count": today["request_count"],
-                    "token_count": today["token_count"],
-                },
-            }
     return None
 
 
